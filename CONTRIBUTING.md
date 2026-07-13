@@ -53,6 +53,35 @@ Working with the project sources requires the following tools:
 - [Docker](https://www.docker.com/)
 - [Varnish Cache](https://varnish.org)
 
+### Building and Testing
+
+**Building**
+
+```shell
+# binary distribution
+make distribution 
+
+# docker distribution
+make -C distribution/varnishotelcollector docker 
+```
+
+This creates the `build` folder and the respective collector binary. The process also prepares architecture-specific
+binaries in `dist`.
+
+**Testing**
+
+```shell
+make gotest
+```
+
+**Generating code**
+
+This step is required when `metadata.yaml` changes.
+
+```shell
+make gogenerate
+```
+
 ---
 
 ## Release
