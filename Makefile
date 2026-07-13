@@ -5,13 +5,17 @@ VERSION ?= nightly
 ALL_MODULES := $(shell find . -mindepth 2 \
 				-type f \
 				-name "go.mod" \
-				-not -path "." \
 				-not -path "./build/*" \
 				-exec dirname {} \; | sort )
 
 GOOS=$(shell go env GOOS)
 GOARCH=$(shell go env GOARCH)
-GOMODULES = $(ALL_MODULES) $(PWD)
+GOMODULES = $(ALL_MODULES)
+
+OTELCOL_BUILDER ?= $(GOCMD) run go.opentelemetry.io/collector/cmd/builder
+OTELCOL_BUILDER_CONFIG ?= distribution/varnishotelcollector/manifest.yaml
+OTELCOL_BUILDER_OUT ?= build
+OTELCOL_BUILDER_ARGS ?=
 
 # Define a delegation target for each module
 .PHONY: $(GOMODULES)
@@ -46,3 +50,31 @@ gofmt:
 gogenerate:
 	@$(MAKE) for-all-target TARGET="generate"
 	$(MAKE) fmt
+
+
+.PHONY: distribution-pre
+distribution-pre:
+	$(OTELCOL_BUILDER) --config $(OTELCOL_BUILDER_CONFIG) --skip-compilation $(OTELCOL_BUILDER_ARGS)
+	$(GOCMD) work edit -use=$(OTELCOL_BUILDER_OUT)
+
+.PHONY: distribution-post
+distribution-post:
+	$(GOCMD) work edit -dropuse=$(OTELCOL_BUILDER_OUT)
+	mkdir -p dist/varnishotelcollector_$(GOOS)_$(GOARCH)
+	cp $(OTELCOL_BUILDER_OUT)/varnishotelcollector dist/varnishotelcollector_$(GOOS)_$(GOARCH)/varnishotelcollector_$(GOOS)_$(GOARCH)
+
+.PHONY: distribution
+distribution:
+	$(MAKE) clean
+	$(MAKE) distribution-pre
+	$(OTELCOL_BUILDER) --config $(OTELCOL_BUILDER_CONFIG) $(OTELCOL_BUILDER_ARGS)
+	$(MAKE) distribution-post
+
+distribution-release:
+	$(MAKE) -C distribution/varnishotelcollector docker-push VERSION=$(VERSION) VARNISH_VERSION=8
+	$(MAKE) -C distribution/varnishotelcollector docker-push VERSION=$(VERSION) VARNISH_VERSION=9
+
+clean:
+	$(RM) -r $(OTELCOL_BUILDER_OUT)
+	$(RM) -r dist
+	go work edit -dropuse=$(OTELCOL_BUILDER_OUT)

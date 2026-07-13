@@ -11,3 +11,4 @@ Collector build and testing is currently not automated. This means that there ar
     - `git tag v0.11.0`
 3. Push the git tag with `git push --tags`
 4. Create a new GitHub release with name `v0.11.0`
+5. Push artifacts with `make distribution-release VERSION=0.11.0`
