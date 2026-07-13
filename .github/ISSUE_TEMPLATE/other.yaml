@@ -1,0 +1,15 @@
+name: Other issue
+description: Create a new issue to help us improve the collector
+labels: []
+body:
+  - type: textarea
+    id: component
+    attributes:
+      label: Component(s)
+      description: Which component(s) does your issue concern?
+  - type: textarea
+    attributes:
+      label: Describe the issue you're reporting
+      description: A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+    validations:
+      required: true

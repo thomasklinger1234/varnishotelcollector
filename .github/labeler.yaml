@@ -1,0 +1,16 @@
+---
+# https://github.com/actions/labeler/tree/v5.0.0
+area/documentation:
+  - changed-files:
+      - any-glob-to-any-file: 'docs/**'
+      - any-glob-to-any-file: '**/*.md'
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/workflows/**/*'
+      - any-glob-to-any-file: '.github/actions/**/*'
+
+area/dependencies:
+  - changed-files:
+      - any-glob-to-any-file: '**/*/go.mod'
+      - any-glob-to-any-file: '**/*/go.sum'

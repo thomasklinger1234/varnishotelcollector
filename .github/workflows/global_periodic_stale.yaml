@@ -1,0 +1,26 @@
+---
+name: global_periodic_stale
+
+on:
+  schedule:
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+    inputs: {}
+
+jobs:
+  default:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@eb5cf3af3ac0a1aa4c9c45633dd1ae542a27a899 # v10
+        with:
+          days-before-issue-stale: 90
+          days-before-issue-close: 7
+          stale-issue-label: 'stale'
+          stale-issue-message: 'This issue is stale because it has been open for 90 days with no activity. Leave a comment to avoid closing this issue in 7 days.'
+          close-issue-message: 'This issue was closed because it has been inactive for 90 days since being marked as stale.'
+          days-before-pr-stale: 90
+          days-before-pr-close: 7
+          repo-token: ${{ secrets.GITHUB_TOKEN }}

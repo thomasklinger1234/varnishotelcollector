@@ -1,0 +1,31 @@
+ALL_PKGS := $(sort $(shell go list ./...))
+
+GOTEST_OPT?= -race -timeout 10s
+GOCMD?= go
+GOTEST=$(GOCMD) test
+
+GOOS := $(shell $(GOCMD) env GOOS)
+GOARCH := $(shell $(GOCMD) env GOARCH)
+
+.PHONY: test
+test:
+	$(GOTEST) $(GOTEST_OPT) ./...
+
+.PHONY: fmt
+fmt:
+	go fmt ./...
+
+.PHONY: tidy
+tidy:
+	go mod tidy
+
+.PHONY: moddownload
+moddownload:
+	$(GOCMD) mod download
+
+.PHONY: generate
+generate:
+	$(GOCMD) generate $(shell $(GOCMD) list ./... | grep -v '/internal/metadata')
+
+mdatagen:
+	$(GOCMD) run go.opentelemetry.io/collector/cmd/mdatagen metadata.yaml
