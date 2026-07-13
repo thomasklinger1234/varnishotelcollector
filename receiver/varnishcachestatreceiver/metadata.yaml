@@ -1,0 +1,24 @@
+type: varnishcachestat
+display_name: Varnish Cache Metrics Receiver
+description: |
+  The receiver fetches metric data from a running [Varnish Cache] or [Vinyl Cache] instance. 
+  
+status:
+  class: receiver
+  stability:
+    alpha: [metrics]
+  distributions: [varnishotelcollector]
+  codeowners:
+    active: [thomasklinger1234]
+    seeking_new: true
+  unsupported_platforms: [windows]
+
+feature_gates:
+  - id: receiver.varnishcachestat.breakPrometheusExporterCompat
+    stage: alpha
+    description: Break compatibility with prometheus_varnish_exporter for metrics
+    from_version: v0.0.0
+    reference_url: https://github.com/thomasklinger1234/varnishotelcollector/issues/7
+
+tests:
+  config:
