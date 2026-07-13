@@ -1,0 +1,22 @@
+$defs:
+  metric_config:
+    type: object
+    properties:
+      working_directory:
+        type: string
+        description: Working directory (-n parameter)
+      include_tags:
+        type: array
+        items:
+          type: string
+          description: Field inclusion glob.
+      exclude_tags:
+        type: array
+        items:
+          type: string
+          description: Field exclusion glob.
+
+description: Config defines configuration for the varnishcachestat receiver.
+allOf:
+  - $ref: metric_config
+  - $ref: go.opentelemetry.io/collector/scraper/scraperhelper.controller_config
