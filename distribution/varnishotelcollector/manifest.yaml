@@ -15,7 +15,9 @@ processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.156.0
   - gomod: go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.156.0
 
-receivers: []
+receivers:
+  - gomod: github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachestatreceiver v1.2.3
+  - gomod: github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver v1.2.3
 
 connectors: []
 
@@ -27,3 +29,7 @@ providers:
   - gomod: go.opentelemetry.io/collector/confmap/provider/yamlprovider v1.52.0
 
 scrapers: []
+
+replaces:
+  - github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachestatreceiver => ../receiver/varnishcachestatreceiver
+  - github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver => ../receiver/varnishcachelogreceiver
