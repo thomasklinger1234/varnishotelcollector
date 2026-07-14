@@ -2,9 +2,11 @@ package varnishcachelogreceiver
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -190,6 +192,24 @@ func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host)
 								}
 							}
 						}
+
+						if span.TraceID().IsEmpty() {
+							tidBuf := make([]byte, 16)
+							binary.BigEndian.PutUint64(tidBuf[0:16], rand.Uint64())
+							span.SetTraceID(pcommon.TraceID(tidBuf))
+						}
+						if span.SpanID().IsEmpty() {
+							sidBuf := make([]byte, 8)
+							binary.BigEndian.PutUint64(sidBuf[0:8], uint64(tx.VXID))
+							span.SetSpanID(pcommon.SpanID(sidBuf))
+						}
+						if span.ParentSpanID().IsEmpty() && txIdx > 0 {
+							// initial request has no parent
+							sidBuf := make([]byte, 8)
+							binary.BigEndian.PutUint64(sidBuf[0:8], uint64(tx.ParentVXID))
+							span.SetParentSpanID(pcommon.SpanID(sidBuf))
+						}
+
 					}
 
 					if err := v.nextConsumer.ConsumeTraces(ctx, traces); err != nil {
@@ -239,7 +259,7 @@ func convertReqHeaderTag(span ptrace.Span, rec varnishlog.Record) error {
 			return fmt.Errorf("invalid traceparent trace-id (%d)", len(tpParts[1]))
 		}
 		if len(tpParts[2]) != 16 {
-			return fmt.Errorf("invalid traceparent trace-id (%d)", len(tpParts[2]))
+			return fmt.Errorf("invalid traceparent span-id (%d)", len(tpParts[2]))
 		}
 		if len(tpParts[3]) != 2 {
 			return fmt.Errorf("invalid traceparent flags (%s)", tpParts[3])
