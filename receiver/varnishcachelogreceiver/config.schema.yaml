@@ -1,0 +1,17 @@
+$defs:
+  log_config:
+    type: object
+    properties:
+      working_directory:
+        type: string
+        description: Working directory (-n parameter)
+      timeout:
+        type: string
+        description: VSM timeout
+      vsl_query:
+        type: string
+        description: VSL query 
+
+description: Config defines configuration for the varnishcachelog receiver.
+allOf:
+  - $ref: log_config

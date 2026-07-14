@@ -1,0 +1,17 @@
+type: varnishcachelog
+display_name: Varnish Cache Log Receiver
+description: |
+  The receiver fetches log data from a running [Varnish Cache] or [Vinyl Cache] instance. 
+  
+status:
+  class: receiver
+  stability:
+    development: [traces]
+  distributions: [varnishotelcollector]
+  codeowners:
+    active: [thomasklinger1234]
+    seeking_new: true
+  unsupported_platforms: [windows]
+
+tests:
+  config:
