@@ -27,9 +27,11 @@ for creating C bindings.
 
 By default, no settings are required.
 
-| Field               | Default | Description                                                                                        |
-|---------------------|---------|----------------------------------------------------------------------------------------------------|
-| `working_directory` | `""`    | The working directory of the Varnish instance. This maps to the `-n` parameter for `varnishd`.     |
+| Field               | Default | Description                                                                                                    |
+|---------------------|---------|----------------------------------------------------------------------------------------------------------------|
+| `working_directory` | `""`    | The working directory of the Varnish instance. This maps to the `-n` parameter for `varnishd`.                 |
+| `timeout`           | `"5s"`  | The VSM connection timeout. This maps to the `-t` parameter for `varnishlog`.                                  |
+| `vsl_query`         | `""`    | The VSL query to filter logs. This maps to the `-q` parameter for `varnishlog`. See *vsl(7)* for more details. |
 
 The full schema can be found in [config.schema.yaml](./config.schema.yaml).
 
