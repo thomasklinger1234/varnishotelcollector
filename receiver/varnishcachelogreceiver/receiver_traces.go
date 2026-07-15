@@ -50,7 +50,6 @@ func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host)
 			vsmCursor.Delete()
 			vsm.Release()
 		}()
-
 		for {
 			select {
 			case <-ctx.Done():

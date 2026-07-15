@@ -1,6 +1,10 @@
 package varnishcachelogreceiver
 
-import "github.com/stretchr/testify/require"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestConfigValidate(t *testing.T) {
 	tests := []struct {

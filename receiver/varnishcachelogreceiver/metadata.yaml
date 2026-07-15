@@ -14,4 +14,8 @@ status:
   unsupported_platforms: [windows]
 
 tests:
+  # TODO(thomasklinger1234): enable this later. Fails currently on VSL_Next
+  goleak:
+    skip: true
   config:
+

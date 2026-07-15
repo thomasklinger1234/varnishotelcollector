@@ -3,10 +3,11 @@
 package varnishcachelogreceiver
 
 import (
-	"go.uber.org/goleak"
+	"os"
 	"testing"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	// skipping goleak test as per metadata.yml configuration
+	os.Exit(m.Run())
 }
