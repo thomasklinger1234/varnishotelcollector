@@ -37,8 +37,9 @@ type varnishstatCounters struct {
 }
 
 type varnishcachestatScraper struct {
-	cfg *Config
-	set receiver.Settings
+	cfg       *Config
+	set       receiver.Settings
+	startTime pcommon.Timestamp
 }
 
 func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
@@ -303,6 +304,7 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 			mSum.SetIsMonotonic(true)
 			mSum.SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 			mSumDp := mSum.DataPoints().AppendEmpty()
+			mSumDp.SetStartTimestamp(v.startTime)
 			mSumDp.SetTimestamp(pcommon.NewTimestampFromTime(statsTimestamp))
 			mSumDp.SetIntValue(int64(stat.Value))
 		case varnishstats.Gauge.String():
@@ -318,8 +320,8 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 				}
 				mGauge := metric.SetEmptyGauge()
 				mGaugeDp := mGauge.DataPoints().AppendEmpty()
-				mGaugeDp.SetTimestamp(pcommon.Timestamp(statsTimestamp.Unix()))
-				mGaugeDp.SetStartTimestamp(pcommon.Timestamp(statsTimestamp.Unix()))
+				mGaugeDp.SetStartTimestamp(v.startTime)
+				mGaugeDp.SetTimestamp(pcommon.NewTimestampFromTime(statsTimestamp))
 				mGaugeDp.SetDoubleValue(upValue)
 
 				metric.SetName("backend_up")
@@ -343,7 +345,11 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 }
 
 func newVarnishcachestatScraper(settings receiver.Settings, cfg *Config) (*varnishcachestatScraper, error) {
-	return &varnishcachestatScraper{cfg: cfg, set: settings}, nil
+	return &varnishcachestatScraper{
+		cfg:       cfg,
+		set:       settings,
+		startTime: pcommon.NewTimestampFromTime(time.Now()),
+	}, nil
 }
 
 func normalizeMetricName(name string) string {
