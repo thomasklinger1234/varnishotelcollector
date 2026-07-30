@@ -75,9 +75,9 @@ func hexSpanID(t *testing.T, hexStr string) pcommon.SpanID {
 	return pcommon.SpanID(id)
 }
 
-func newTestReceiver(t *testing.T) varnishcachelogReceiver {
+func newTestReceiver(t *testing.T) *varnishcachelogReceiver {
 	t.Helper()
-	return varnishcachelogReceiver{
+	return &varnishcachelogReceiver{
 		set: receivertest.NewNopSettings(metadata.Type),
 		cfg: createDefaultConfig().(*Config),
 	}
@@ -335,9 +335,15 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 		traceIDHex     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		rxreqSpanIDHex = "1111111111111111"
 		esiSpanIDHex   = "2222222222222222"
+		bereqSpanIDHex = "3333333333333333"
+		esiBqSpanIDHex = "4444444444444444"
 	)
 	rxreqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, rxreqSpanIDHex)
 	esiTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, esiSpanIDHex)
+	// vcl_backend_fetch mints a fresh span-id and rewrites bereq.http.traceparent
+	// so the origin backend sees the bereq's own span as its parent.
+	bereqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, bereqSpanIDHex)
+	esiBqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, esiBqSpanIDHex)
 
 	rcv := newTestReceiver(t)
 
@@ -360,7 +366,7 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 			Level: 3, VXID: bereqVXID, ParentVXID: rxreqVXID,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", rxreqTP),
+				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
 			},
 		},
 		{
@@ -376,7 +382,7 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 			Level: 4, VXID: esiBqVXID, ParentVXID: esiVXID,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(esiBqVXID), "bereq", fmt.Sprintf("%d", esiVXID), "fetch"),
-				bereqHeaderRecord(t, uint(esiBqVXID), "traceparent", esiTP),
+				bereqHeaderRecord(t, uint(esiBqVXID), "traceparent", esiBqTP),
 			},
 		},
 	}
@@ -400,6 +406,8 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 	wantTraceID := hexTraceID(t, traceIDHex)
 	wantRxreqSpanID := hexSpanID(t, rxreqSpanIDHex)
 	wantEsiSpanID := hexSpanID(t, esiSpanIDHex)
+	wantBereqSpanID := hexSpanID(t, bereqSpanIDHex)
+	wantEsiBqSpanID := hexSpanID(t, esiBqSpanIDHex)
 
 	rxreq, ok := find(rxreqVXID)
 	require.True(t, ok)
@@ -410,8 +418,8 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 	bereq, ok := find(bereqVXID)
 	require.True(t, ok)
 	assert.Equal(t, wantTraceID, bereq.TraceID(), "bereq must share the rxreq trace ID")
-	assert.Equal(t, generateSpanID(uint64(bereqVXID)), bereq.SpanID(), "bereq span ID stays synthetic (VCL does not mint a bereq-specific span)")
-	assert.Equal(t, wantRxreqSpanID, bereq.ParentSpanID(), "bereq parent must be the parent req's Varnish span (from bereq's own traceparent parent_id)")
+	assert.Equal(t, wantBereqSpanID, bereq.SpanID(), "bereq span ID must come from its own traceparent parent_id (vcl_backend_fetch mints a fresh span)")
+	assert.Equal(t, wantRxreqSpanID, bereq.ParentSpanID(), "bereq parent must be the parent req's Varnish span, looked up via the VXID chain")
 
 	esi, ok := find(esiVXID)
 	require.True(t, ok)
@@ -422,8 +430,8 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 	esiBq, ok := find(esiBqVXID)
 	require.True(t, ok)
 	assert.Equal(t, wantTraceID, esiBq.TraceID())
-	assert.Equal(t, generateSpanID(uint64(esiBqVXID)), esiBq.SpanID())
-	assert.Equal(t, wantEsiSpanID, esiBq.ParentSpanID(), "ESI's bereq parent = ESI's Varnish span (from bereq traceparent)")
+	assert.Equal(t, wantEsiBqSpanID, esiBq.SpanID(), "ESI's bereq span ID must come from its own traceparent parent_id (vcl_backend_fetch mints a fresh span)")
+	assert.Equal(t, wantEsiSpanID, esiBq.ParentSpanID(), "ESI's bereq parent = ESI's Varnish span, looked up via the VXID chain")
 }
 
 // TestBuildTraces_TraceparentFallback guards against silent breakage:

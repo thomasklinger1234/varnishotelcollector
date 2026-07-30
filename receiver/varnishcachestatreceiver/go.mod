@@ -2,6 +2,11 @@ module github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachest
 
 go 1.26
 
+// Shares the local fork of gitlab.com/uplex/varnish/varnishapi vendored
+// under receiver/varnishcachelogreceiver/pkg/gitlab.com/uplex/varnish/varnishapi.
+// See that directory for the patch and rationale.
+replace gitlab.com/uplex/varnish/varnishapi => ../varnishcachelogreceiver/pkg/gitlab.com/uplex/varnish/varnishapi
+
 require (
 	github.com/stretchr/testify v1.11.1
 	gitlab.com/uplex/varnish/varnishapi v1.0.0

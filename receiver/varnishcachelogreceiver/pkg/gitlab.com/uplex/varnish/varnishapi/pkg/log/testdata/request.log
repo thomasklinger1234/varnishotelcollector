@@ -1,0 +1,759 @@
+*              << Request  >>   2         
+-            2 Begin          c req 1 rxreq
+-            2 Timestamp      c Start: 1533799283.516451 0.000000 0.000000
+-            2 Timestamp      c Req: 1533799283.516451 0.000000 0.000000
+-            2 ReqStart       c 127.0.0.1 38018 a0
+-            2 ReqMethod      c GET
+-            2 ReqURL         c /
+-            2 ReqProtocol    c HTTP/1.1
+-            2 ReqHeader      c Host: localhost:8080
+-            2 ReqHeader      c User-Agent: curl/7.52.1
+-            2 ReqHeader      c Accept: */*
+-            2 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-            2 VCL_call       c RECV
+-            2 VCL_return     c hash
+-            2 VCL_call       c HASH
+-            2 VCL_return     c lookup
+-            2 VCL_call       c MISS
+-            2 VCL_return     c fetch
+-            2 Link           c bereq 3 fetch
+-            2 Timestamp      c Fetch: 1533799283.517071 0.000620 0.000620
+-            2 RespProtocol   c HTTP/1.1
+-            2 RespStatus     c 200
+-            2 RespReason     c OK
+-            2 RespHeader     c Server: testbackend.go
+-            2 RespHeader     c Date: Thu, 09 Aug 2018 07:21:23 GMT
+-            2 RespHeader     c Content-Length: 39
+-            2 RespHeader     c Content-Type: text/html; charset=utf-8
+-            2 RespHeader     c X-Varnish: 2
+-            2 RespHeader     c Age: 0
+-            2 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-            2 VCL_call       c DELIVER
+-            2 VCL_return     c deliver
+-            2 Timestamp      c Process: 1533799283.517098 0.000647 0.000027
+-            2 RespHeader     c Accept-Ranges: bytes
+-            2 RespHeader     c Connection: keep-alive
+-            2 Timestamp      c Resp: 1533799283.517144 0.000693 0.000046
+-            2 ReqAcct        c 78 0 78 240 39 279
+-            2 End            c 
+**             << BeReq    >>   3         
+--           3 Begin          b bereq 2 fetch
+--           3 Timestamp      b Start: 1533799283.516577 0.000000 0.000000
+--           3 BereqMethod    b GET
+--           3 BereqURL       b /
+--           3 BereqProtocol  b HTTP/1.1
+--           3 BereqHeader    b Host: localhost:8080
+--           3 BereqHeader    b User-Agent: curl/7.52.1
+--           3 BereqHeader    b Accept: */*
+--           3 BereqHeader    b X-Forwarded-For: 127.0.0.1
+--           3 BereqHeader    b Accept-Encoding: gzip
+--           3 BereqHeader    b X-Varnish: 3
+--           3 VCL_call       b BACKEND_FETCH
+--           3 VCL_return     b fetch
+--           3 BackendOpen    b 30 boot.test 127.0.0.1 39659 127.0.0.1 37230
+--           3 BackendStart   b 127.0.0.1 39659
+--           3 Timestamp      b Bereq: 1533799283.516785 0.000208 0.000208
+--           3 Timestamp      b Beresp: 1533799283.516958 0.000381 0.000174
+--           3 BerespProtocol b HTTP/1.1
+--           3 BerespStatus   b 200
+--           3 BerespReason   b OK
+--           3 BerespHeader   b Server: testbackend.go
+--           3 BerespHeader   b Date: Thu, 09 Aug 2018 07:21:23 GMT
+--           3 BerespHeader   b Content-Length: 39
+--           3 BerespHeader   b Content-Type: text/html; charset=utf-8
+--           3 TTL            b RFC 120 10 0 1533799284 1533799284 1533799283 0 0 cacheable
+--           3 VCL_call       b BACKEND_RESPONSE
+--           3 VCL_return     b deliver
+--           3 Storage        b malloc s0
+--           3 Fetch_Body     b 3 length -
+--           3 BackendReuse   b 30 boot.test
+--           3 Timestamp      b BerespBody: 1533799283.517067 0.000490 0.000109
+--           3 Length         b 39
+--           3 BereqAcct      b 143 0 143 140 39 179
+--           3 End            b 
+
+*              << Request  >>   5         
+-            5 Begin          c req 4 rxreq
+-            5 Timestamp      c Start: 1533799286.395210 0.000000 0.000000
+-            5 Timestamp      c Req: 1533799286.395210 0.000000 0.000000
+-            5 ReqStart       c 127.0.0.1 38040 a0
+-            5 ReqMethod      c GET
+-            5 ReqURL         c /esi
+-            5 ReqProtocol    c HTTP/1.1
+-            5 ReqHeader      c Host: localhost:8080
+-            5 ReqHeader      c User-Agent: curl/7.52.1
+-            5 ReqHeader      c Accept: */*
+-            5 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-            5 VCL_call       c RECV
+-            5 VCL_return     c hash
+-            5 VCL_call       c HASH
+-            5 VCL_return     c lookup
+-            5 VCL_call       c MISS
+-            5 VCL_return     c fetch
+-            5 Link           c bereq 6 fetch
+-            5 Timestamp      c Fetch: 1533799286.395534 0.000324 0.000324
+-            5 RespProtocol   c HTTP/1.1
+-            5 RespStatus     c 200
+-            5 RespReason     c OK
+-            5 RespHeader     c Server: testbackend.go
+-            5 RespHeader     c Date: Thu, 09 Aug 2018 07:21:26 GMT
+-            5 RespHeader     c Content-Length: 151
+-            5 RespHeader     c Content-Type: text/html; charset=utf-8
+-            5 RespHeader     c X-Varnish: 5
+-            5 RespHeader     c Age: 0
+-            5 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-            5 VCL_call       c DELIVER
+-            5 VCL_return     c deliver
+-            5 Timestamp      c Process: 1533799286.395545 0.000336 0.000012
+-            5 RespHeader     c Accept-Ranges: bytes
+-            5 RespUnset      c Content-Length: 151
+-            5 RespHeader     c Transfer-Encoding: chunked
+-            5 RespHeader     c Connection: keep-alive
+-            5 Link           c req 7 esi
+-            5 Link           c req 9 esi
+-            5 Timestamp      c Resp: 1533799286.396089 0.000880 0.000544
+-            5 ReqAcct        c 81 0 81 248 152 400
+-            5 End            c 
+**             << BeReq    >>   6         
+--           6 Begin          b bereq 5 fetch
+--           6 Timestamp      b Start: 1533799286.395248 0.000000 0.000000
+--           6 BereqMethod    b GET
+--           6 BereqURL       b /esi
+--           6 BereqProtocol  b HTTP/1.1
+--           6 BereqHeader    b Host: localhost:8080
+--           6 BereqHeader    b User-Agent: curl/7.52.1
+--           6 BereqHeader    b Accept: */*
+--           6 BereqHeader    b X-Forwarded-For: 127.0.0.1
+--           6 BereqHeader    b Accept-Encoding: gzip
+--           6 BereqHeader    b X-Varnish: 6
+--           6 VCL_call       b BACKEND_FETCH
+--           6 VCL_return     b fetch
+--           6 BackendOpen    b 30 boot.test 127.0.0.1 39659 127.0.0.1 37230
+--           6 BackendStart   b 127.0.0.1 39659
+--           6 Timestamp      b Bereq: 1533799286.395292 0.000044 0.000044
+--           6 Timestamp      b Beresp: 1533799286.395461 0.000213 0.000169
+--           6 BerespProtocol b HTTP/1.1
+--           6 BerespStatus   b 200
+--           6 BerespReason   b OK
+--           6 BerespHeader   b Server: testbackend.go
+--           6 BerespHeader   b Date: Thu, 09 Aug 2018 07:21:26 GMT
+--           6 BerespHeader   b Content-Length: 151
+--           6 BerespHeader   b Content-Type: text/html; charset=utf-8
+--           6 TTL            b RFC 120 10 0 1533799286 1533799286 1533799286 0 0 cacheable
+--           6 VCL_call       b BACKEND_RESPONSE
+--           6 VCL_return     b deliver
+--           6 Storage        b malloc s0
+--           6 Fetch_Body     b 3 length -
+--           6 ESI_xmlerror   b WARN after 29 ESI 1.0 <esi:include> lacks final '/'
+--           6 ESI_xmlerror   b WARN after 91 ESI 1.0 <esi:include> lacks final '/'
+--           6 BackendReuse   b 30 boot.test
+--           6 Timestamp      b BerespBody: 1533799286.395530 0.000282 0.000069
+--           6 Length         b 151
+--           6 BereqAcct      b 146 0 146 141 151 292
+--           6 End            b 
+**             << Request  >>   7         
+--           7 Begin          c req 5 esi
+--           7 ReqURL         c /include1
+--           7 Timestamp      c Start: 1533799286.395601 0.000000 0.000000
+--           7 ReqStart       c 127.0.0.1 38040 a0
+--           7 ReqMethod      c GET
+--           7 ReqURL         c /include1
+--           7 ReqProtocol    c HTTP/1.1
+--           7 ReqHeader      c Host: localhost:8080
+--           7 ReqHeader      c User-Agent: curl/7.52.1
+--           7 ReqHeader      c Accept: */*
+--           7 ReqHeader      c X-Forwarded-For: 127.0.0.1
+--           7 VCL_call       c RECV
+--           7 VCL_return     c hash
+--           7 VCL_call       c HASH
+--           7 VCL_return     c lookup
+--           7 VCL_call       c MISS
+--           7 VCL_return     c fetch
+--           7 Link           c bereq 8 fetch
+--           7 Timestamp      c Fetch: 1533799286.395787 0.000186 0.000186
+--           7 RespProtocol   c HTTP/1.1
+--           7 RespStatus     c 200
+--           7 RespReason     c OK
+--           7 RespHeader     c Server: testbackend.go
+--           7 RespHeader     c Date: Thu, 09 Aug 2018 07:21:26 GMT
+--           7 RespHeader     c Content-Length: 8
+--           7 RespHeader     c Content-Type: text/plain; charset=utf-8
+--           7 RespHeader     c X-Varnish: 7
+--           7 RespHeader     c Age: 0
+--           7 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+--           7 VCL_call       c DELIVER
+--           7 VCL_return     c deliver
+--           7 Timestamp      c Process: 1533799286.395794 0.000194 0.000007
+--           7 RespHeader     c Accept-Ranges: bytes
+--           7 Timestamp      c Resp: 1533799286.395814 0.000213 0.000020
+--           7 ReqAcct        c 0 0 0 0 8 8
+--           7 End            c 
+**             << Request  >>   9         
+--           9 Begin          c req 5 esi
+--           9 ReqURL         c /include2
+--           9 Timestamp      c Start: 1533799286.395873 0.000000 0.000000
+--           9 ReqStart       c 127.0.0.1 38040 a0
+--           9 ReqMethod      c GET
+--           9 ReqURL         c /include2
+--           9 ReqProtocol    c HTTP/1.1
+--           9 ReqHeader      c Host: localhost:8080
+--           9 ReqHeader      c User-Agent: curl/7.52.1
+--           9 ReqHeader      c Accept: */*
+--           9 ReqHeader      c X-Forwarded-For: 127.0.0.1
+--           9 VCL_call       c RECV
+--           9 VCL_return     c hash
+--           9 VCL_call       c HASH
+--           9 VCL_return     c lookup
+--           9 VCL_call       c MISS
+--           9 VCL_return     c fetch
+--           9 Link           c bereq 10 fetch
+--           9 Timestamp      c Fetch: 1533799286.396036 0.000163 0.000163
+--           9 RespProtocol   c HTTP/1.1
+--           9 RespStatus     c 200
+--           9 RespReason     c OK
+--           9 RespHeader     c Server: testbackend.go
+--           9 RespHeader     c Date: Thu, 09 Aug 2018 07:21:26 GMT
+--           9 RespHeader     c Content-Length: 8
+--           9 RespHeader     c Content-Type: text/plain; charset=utf-8
+--           9 RespHeader     c X-Varnish: 9
+--           9 RespHeader     c Age: 0
+--           9 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+--           9 VCL_call       c DELIVER
+--           9 VCL_return     c deliver
+--           9 Timestamp      c Process: 1533799286.396043 0.000171 0.000008
+--           9 RespHeader     c Accept-Ranges: bytes
+--           9 Timestamp      c Resp: 1533799286.396064 0.000191 0.000021
+--           9 ReqAcct        c 0 0 0 0 8 8
+--           9 End            c 
+***            << BeReq    >>   8         
+---          8 Begin          b bereq 7 fetch
+---          8 Timestamp      b Start: 1533799286.395623 0.000000 0.000000
+---          8 BereqMethod    b GET
+---          8 BereqURL       b /include1
+---          8 BereqProtocol  b HTTP/1.1
+---          8 BereqHeader    b Host: localhost:8080
+---          8 BereqHeader    b User-Agent: curl/7.52.1
+---          8 BereqHeader    b Accept: */*
+---          8 BereqHeader    b X-Forwarded-For: 127.0.0.1
+---          8 BereqHeader    b Accept-Encoding: gzip
+---          8 BereqHeader    b X-Varnish: 8
+---          8 VCL_call       b BACKEND_FETCH
+---          8 VCL_return     b fetch
+---          8 BackendOpen    b 30 boot.test 127.0.0.1 39659 127.0.0.1 37230
+---          8 BackendStart   b 127.0.0.1 39659
+---          8 Timestamp      b Bereq: 1533799286.395660 0.000037 0.000037
+---          8 Timestamp      b Beresp: 1533799286.395740 0.000117 0.000080
+---          8 BerespProtocol b HTTP/1.1
+---          8 BerespStatus   b 200
+---          8 BerespReason   b OK
+---          8 BerespHeader   b Server: testbackend.go
+---          8 BerespHeader   b Date: Thu, 09 Aug 2018 07:21:26 GMT
+---          8 BerespHeader   b Content-Length: 8
+---          8 BerespHeader   b Content-Type: text/plain; charset=utf-8
+---          8 TTL            b RFC 120 10 0 1533799286 1533799286 1533799286 0 0 cacheable
+---          8 VCL_call       b BACKEND_RESPONSE
+---          8 VCL_return     b deliver
+---          8 Storage        b malloc s0
+---          8 Fetch_Body     b 3 length -
+---          8 ESI_xmlerror   b No ESI processing, first char not '<'. (See feature esi_disable_xml_check)
+---          8 BackendReuse   b 30 boot.test
+---          8 Timestamp      b BerespBody: 1533799286.395784 0.000160 0.000043
+---          8 Length         b 8
+---          8 BereqAcct      b 151 0 151 140 8 148
+---          8 End            b 
+***            << BeReq    >>   10        
+---         10 Begin          b bereq 9 fetch
+---         10 Timestamp      b Start: 1533799286.395890 0.000000 0.000000
+---         10 BereqMethod    b GET
+---         10 BereqURL       b /include2
+---         10 BereqProtocol  b HTTP/1.1
+---         10 BereqHeader    b Host: localhost:8080
+---         10 BereqHeader    b User-Agent: curl/7.52.1
+---         10 BereqHeader    b Accept: */*
+---         10 BereqHeader    b X-Forwarded-For: 127.0.0.1
+---         10 BereqHeader    b Accept-Encoding: gzip
+---         10 BereqHeader    b X-Varnish: 10
+---         10 VCL_call       b BACKEND_FETCH
+---         10 VCL_return     b fetch
+---         10 BackendOpen    b 30 boot.test 127.0.0.1 39659 127.0.0.1 37230
+---         10 BackendStart   b 127.0.0.1 39659
+---         10 Timestamp      b Bereq: 1533799286.395925 0.000035 0.000035
+---         10 Timestamp      b Beresp: 1533799286.395999 0.000109 0.000074
+---         10 BerespProtocol b HTTP/1.1
+---         10 BerespStatus   b 200
+---         10 BerespReason   b OK
+---         10 BerespHeader   b Server: testbackend.go
+---         10 BerespHeader   b Date: Thu, 09 Aug 2018 07:21:26 GMT
+---         10 BerespHeader   b Content-Length: 8
+---         10 BerespHeader   b Content-Type: text/plain; charset=utf-8
+---         10 TTL            b RFC 120 10 0 1533799286 1533799286 1533799286 0 0 cacheable
+---         10 VCL_call       b BACKEND_RESPONSE
+---         10 VCL_return     b deliver
+---         10 Storage        b malloc s0
+---         10 Fetch_Body     b 3 length -
+---         10 ESI_xmlerror   b No ESI processing, first char not '<'. (See feature esi_disable_xml_check)
+---         10 BackendReuse   b 30 boot.test
+---         10 Timestamp      b BerespBody: 1533799286.396033 0.000143 0.000034
+---         10 Length         b 8
+---         10 BereqAcct      b 152 0 152 140 8 148
+---         10 End            b 
+
+*              << Request  >>   32770     
+-        32770 Begin          c req 32769 rxreq
+-        32770 Timestamp      c Start: 1533799288.488980 0.000000 0.000000
+-        32770 Timestamp      c Req: 1533799288.488980 0.000000 0.000000
+-        32770 ReqStart       c 127.0.0.1 38054 a0
+-        32770 ReqMethod      c GET
+-        32770 ReqURL         c /
+-        32770 ReqProtocol    c HTTP/1.1
+-        32770 ReqHeader      c Host: localhost:8080
+-        32770 ReqHeader      c User-Agent: curl/7.52.1
+-        32770 ReqHeader      c Accept: */*
+-        32770 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-        32770 VCL_call       c RECV
+-        32770 VCL_return     c hash
+-        32770 VCL_call       c HASH
+-        32770 VCL_return     c lookup
+-        32770 Hit            c 3 115.027978 10.000000 0.000000
+-        32770 VCL_call       c HIT
+-        32770 VCL_return     c deliver
+-        32770 RespProtocol   c HTTP/1.1
+-        32770 RespStatus     c 200
+-        32770 RespReason     c OK
+-        32770 RespHeader     c Server: testbackend.go
+-        32770 RespHeader     c Date: Thu, 09 Aug 2018 07:21:23 GMT
+-        32770 RespHeader     c Content-Length: 39
+-        32770 RespHeader     c Content-Type: text/html; charset=utf-8
+-        32770 RespHeader     c X-Varnish: 32770 3
+-        32770 RespHeader     c Age: 4
+-        32770 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-        32770 VCL_call       c DELIVER
+-        32770 VCL_return     c deliver
+-        32770 Timestamp      c Process: 1533799288.489031 0.000050 0.000050
+-        32770 RespHeader     c Accept-Ranges: bytes
+-        32770 RespHeader     c Connection: keep-alive
+-        32770 Timestamp      c Resp: 1533799288.489062 0.000082 0.000031
+-        32770 ReqAcct        c 78 0 78 246 39 285
+-        32770 End            c 
+
+*              << Request  >>   32772     
+-        32772 Begin          c req 32771 rxreq
+-        32772 Timestamp      c Start: 1533799293.001498 0.000000 0.000000
+-        32772 Timestamp      c Req: 1533799293.001498 0.000000 0.000000
+-        32772 ReqStart       c 127.0.0.1 38086 a0
+-        32772 ReqMethod      c GET
+-        32772 ReqURL         c /esi
+-        32772 ReqProtocol    c HTTP/1.1
+-        32772 ReqHeader      c Host: localhost:8080
+-        32772 ReqHeader      c User-Agent: curl/7.52.1
+-        32772 ReqHeader      c Accept: */*
+-        32772 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-        32772 VCL_call       c RECV
+-        32772 VCL_return     c hash
+-        32772 VCL_call       c HASH
+-        32772 VCL_return     c lookup
+-        32772 Hit            c 6 113.393963 10.000000 0.000000
+-        32772 VCL_call       c HIT
+-        32772 VCL_return     c deliver
+-        32772 RespProtocol   c HTTP/1.1
+-        32772 RespStatus     c 200
+-        32772 RespReason     c OK
+-        32772 RespHeader     c Server: testbackend.go
+-        32772 RespHeader     c Date: Thu, 09 Aug 2018 07:21:26 GMT
+-        32772 RespHeader     c Content-Length: 151
+-        32772 RespHeader     c Content-Type: text/html; charset=utf-8
+-        32772 RespHeader     c X-Varnish: 32772 6
+-        32772 RespHeader     c Age: 6
+-        32772 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-        32772 VCL_call       c DELIVER
+-        32772 VCL_return     c deliver
+-        32772 Timestamp      c Process: 1533799293.001531 0.000033 0.000033
+-        32772 RespHeader     c Accept-Ranges: bytes
+-        32772 RespUnset      c Content-Length: 151
+-        32772 RespHeader     c Transfer-Encoding: chunked
+-        32772 RespHeader     c Connection: keep-alive
+-        32772 Link           c req 32773 esi
+-        32772 Link           c req 32774 esi
+-        32772 Timestamp      c Resp: 1533799293.001708 0.000210 0.000177
+-        32772 ReqAcct        c 81 0 81 254 152 406
+-        32772 End            c 
+**             << Request  >>   32773     
+--       32773 Begin          c req 32772 esi
+--       32773 ReqURL         c /include1
+--       32773 Timestamp      c Start: 1533799293.001589 0.000000 0.000000
+--       32773 ReqStart       c 127.0.0.1 38086 a0
+--       32773 ReqMethod      c GET
+--       32773 ReqURL         c /include1
+--       32773 ReqProtocol    c HTTP/1.1
+--       32773 ReqHeader      c Host: localhost:8080
+--       32773 ReqHeader      c User-Agent: curl/7.52.1
+--       32773 ReqHeader      c Accept: */*
+--       32773 ReqHeader      c X-Forwarded-For: 127.0.0.1
+--       32773 VCL_call       c RECV
+--       32773 VCL_return     c hash
+--       32773 VCL_call       c HASH
+--       32773 VCL_return     c lookup
+--       32773 Hit            c 8 113.394242 10.000000 0.000000
+--       32773 VCL_call       c HIT
+--       32773 VCL_return     c deliver
+--       32773 RespProtocol   c HTTP/1.1
+--       32773 RespStatus     c 200
+--       32773 RespReason     c OK
+--       32773 RespHeader     c Server: testbackend.go
+--       32773 RespHeader     c Date: Thu, 09 Aug 2018 07:21:26 GMT
+--       32773 RespHeader     c Content-Length: 8
+--       32773 RespHeader     c Content-Type: text/plain; charset=utf-8
+--       32773 RespHeader     c X-Varnish: 32773 8
+--       32773 RespHeader     c Age: 6
+--       32773 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+--       32773 VCL_call       c DELIVER
+--       32773 VCL_return     c deliver
+--       32773 Timestamp      c Process: 1533799293.001600 0.000010 0.000010
+--       32773 RespHeader     c Accept-Ranges: bytes
+--       32773 Timestamp      c Resp: 1533799293.001613 0.000024 0.000014
+--       32773 ReqAcct        c 0 0 0 0 8 8
+--       32773 End            c 
+**             << Request  >>   32774     
+--       32774 Begin          c req 32772 esi
+--       32774 ReqURL         c /include2
+--       32774 Timestamp      c Start: 1533799293.001657 0.000000 0.000000
+--       32774 ReqStart       c 127.0.0.1 38086 a0
+--       32774 ReqMethod      c GET
+--       32774 ReqURL         c /include2
+--       32774 ReqProtocol    c HTTP/1.1
+--       32774 ReqHeader      c Host: localhost:8080
+--       32774 ReqHeader      c User-Agent: curl/7.52.1
+--       32774 ReqHeader      c Accept: */*
+--       32774 ReqHeader      c X-Forwarded-For: 127.0.0.1
+--       32774 VCL_call       c RECV
+--       32774 VCL_return     c hash
+--       32774 VCL_call       c HASH
+--       32774 VCL_return     c lookup
+--       32774 Hit            c 10 113.394501 10.000000 0.000000
+--       32774 VCL_call       c HIT
+--       32774 VCL_return     c deliver
+--       32774 RespProtocol   c HTTP/1.1
+--       32774 RespStatus     c 200
+--       32774 RespReason     c OK
+--       32774 RespHeader     c Server: testbackend.go
+--       32774 RespHeader     c Date: Thu, 09 Aug 2018 07:21:26 GMT
+--       32774 RespHeader     c Content-Length: 8
+--       32774 RespHeader     c Content-Type: text/plain; charset=utf-8
+--       32774 RespHeader     c X-Varnish: 32774 10
+--       32774 RespHeader     c Age: 6
+--       32774 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+--       32774 VCL_call       c DELIVER
+--       32774 VCL_return     c deliver
+--       32774 Timestamp      c Process: 1533799293.001666 0.000009 0.000009
+--       32774 RespHeader     c Accept-Ranges: bytes
+--       32774 Timestamp      c Resp: 1533799293.001682 0.000026 0.000016
+--       32774 ReqAcct        c 0 0 0 0 8 8
+--       32774 End            c 
+
+*              << Request  >>   12        
+-           12 Begin          c req 11 rxreq
+-           12 Timestamp      c Start: 1533799299.438128 0.000000 0.000000
+-           12 Timestamp      c Req: 1533799299.438128 0.000000 0.000000
+-           12 ReqStart       c 127.0.0.1 38124 a0
+-           12 ReqMethod      c GET
+-           12 ReqURL         c /uncacheable
+-           12 ReqProtocol    c HTTP/1.1
+-           12 ReqHeader      c Host: localhost:8080
+-           12 ReqHeader      c User-Agent: curl/7.52.1
+-           12 ReqHeader      c Accept: */*
+-           12 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-           12 VCL_call       c RECV
+-           12 VCL_return     c hash
+-           12 VCL_call       c HASH
+-           12 VCL_return     c lookup
+-           12 VCL_call       c MISS
+-           12 VCL_return     c fetch
+-           12 Link           c bereq 13 fetch
+-           12 Timestamp      c Fetch: 1533799299.438493 0.000364 0.000364
+-           12 RespProtocol   c HTTP/1.1
+-           12 RespStatus     c 200
+-           12 RespReason     c OK
+-           12 RespHeader     c Cache-Control: max-age=0
+-           12 RespHeader     c Server: testbackend.go
+-           12 RespHeader     c Date: Thu, 09 Aug 2018 07:21:39 GMT
+-           12 RespHeader     c Content-Length: 41
+-           12 RespHeader     c Content-Type: text/html; charset=utf-8
+-           12 RespHeader     c X-Varnish: 12
+-           12 RespHeader     c Age: 0
+-           12 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-           12 VCL_call       c DELIVER
+-           12 VCL_return     c deliver
+-           12 Timestamp      c Process: 1533799299.438504 0.000376 0.000011
+-           12 RespHeader     c Accept-Ranges: bytes
+-           12 RespHeader     c Connection: keep-alive
+-           12 Timestamp      c Resp: 1533799299.438535 0.000407 0.000031
+-           12 ReqAcct        c 89 0 89 267 41 308
+-           12 End            c 
+**             << BeReq    >>   13        
+--          13 Begin          b bereq 12 fetch
+--          13 Timestamp      b Start: 1533799299.438194 0.000000 0.000000
+--          13 BereqMethod    b GET
+--          13 BereqURL       b /uncacheable
+--          13 BereqProtocol  b HTTP/1.1
+--          13 BereqHeader    b Host: localhost:8080
+--          13 BereqHeader    b User-Agent: curl/7.52.1
+--          13 BereqHeader    b Accept: */*
+--          13 BereqHeader    b X-Forwarded-For: 127.0.0.1
+--          13 BereqHeader    b Accept-Encoding: gzip
+--          13 BereqHeader    b X-Varnish: 13
+--          13 VCL_call       b BACKEND_FETCH
+--          13 VCL_return     b fetch
+--          13 BackendOpen    b 30 boot.test 127.0.0.1 39659 127.0.0.1 37230
+--          13 BackendStart   b 127.0.0.1 39659
+--          13 Timestamp      b Bereq: 1533799299.438255 0.000061 0.000061
+--          13 Timestamp      b Beresp: 1533799299.438425 0.000231 0.000170
+--          13 BerespProtocol b HTTP/1.1
+--          13 BerespStatus   b 200
+--          13 BerespReason   b OK
+--          13 BerespHeader   b Cache-Control: max-age=0
+--          13 BerespHeader   b Server: testbackend.go
+--          13 BerespHeader   b Date: Thu, 09 Aug 2018 07:21:39 GMT
+--          13 BerespHeader   b Content-Length: 41
+--          13 BerespHeader   b Content-Type: text/html; charset=utf-8
+--          13 TTL            b RFC 0 10 0 1533799299 1533799299 1533799299 0 0 cacheable
+--          13 VCL_call       b BACKEND_RESPONSE
+--          13 TTL            b VCL 120 10 0 1533799299 cacheable
+--          13 TTL            b VCL 120 10 0 1533799299 uncacheable
+--          13 VCL_return     b deliver
+--          13 Storage        b malloc Transient
+--          13 Fetch_Body     b 3 length -
+--          13 BackendReuse   b 30 boot.test
+--          13 Timestamp      b BerespBody: 1533799299.438481 0.000287 0.000057
+--          13 Length         b 41
+--          13 BereqAcct      b 155 0 155 166 41 207
+--          13 End            b 
+
+*              << Request  >>   32776     
+-        32776 Begin          c req 32775 rxreq
+-        32776 Timestamp      c Start: 1533799301.686047 0.000000 0.000000
+-        32776 Timestamp      c Req: 1533799301.686047 0.000000 0.000000
+-        32776 ReqStart       c 127.0.0.1 38140 a0
+-        32776 ReqMethod      c GET
+-        32776 ReqURL         c /uncacheable
+-        32776 ReqProtocol    c HTTP/1.1
+-        32776 ReqHeader      c Host: localhost:8080
+-        32776 ReqHeader      c User-Agent: curl/7.52.1
+-        32776 ReqHeader      c Accept: */*
+-        32776 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-        32776 VCL_call       c RECV
+-        32776 VCL_return     c hash
+-        32776 VCL_call       c HASH
+-        32776 VCL_return     c lookup
+-        32776 HitMiss        c 13 117.752378
+-        32776 VCL_call       c MISS
+-        32776 VCL_return     c fetch
+-        32776 Link           c bereq 32777 fetch
+-        32776 Timestamp      c Fetch: 1533799301.686502 0.000456 0.000456
+-        32776 RespProtocol   c HTTP/1.1
+-        32776 RespStatus     c 200
+-        32776 RespReason     c OK
+-        32776 RespHeader     c Cache-Control: max-age=0
+-        32776 RespHeader     c Server: testbackend.go
+-        32776 RespHeader     c Date: Thu, 09 Aug 2018 07:21:41 GMT
+-        32776 RespHeader     c Content-Length: 41
+-        32776 RespHeader     c Content-Type: text/html; charset=utf-8
+-        32776 RespHeader     c X-Varnish: 32776
+-        32776 RespHeader     c Age: 0
+-        32776 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-        32776 VCL_call       c DELIVER
+-        32776 VCL_return     c deliver
+-        32776 Timestamp      c Process: 1533799301.686517 0.000470 0.000014
+-        32776 RespHeader     c Accept-Ranges: bytes
+-        32776 RespHeader     c Connection: keep-alive
+-        32776 Timestamp      c Resp: 1533799301.686549 0.000503 0.000033
+-        32776 ReqAcct        c 89 0 89 270 41 311
+-        32776 End            c 
+**             << BeReq    >>   32777     
+--       32777 Begin          b bereq 32776 fetch
+--       32777 Timestamp      b Start: 1533799301.686114 0.000000 0.000000
+--       32777 BereqMethod    b GET
+--       32777 BereqURL       b /uncacheable
+--       32777 BereqProtocol  b HTTP/1.1
+--       32777 BereqHeader    b Host: localhost:8080
+--       32777 BereqHeader    b User-Agent: curl/7.52.1
+--       32777 BereqHeader    b Accept: */*
+--       32777 BereqHeader    b X-Forwarded-For: 127.0.0.1
+--       32777 BereqHeader    b Accept-Encoding: gzip
+--       32777 BereqHeader    b X-Varnish: 32777
+--       32777 VCL_call       b BACKEND_FETCH
+--       32777 VCL_return     b fetch
+--       32777 BackendOpen    b 30 boot.test 127.0.0.1 39659 127.0.0.1 37230
+--       32777 BackendStart   b 127.0.0.1 39659
+--       32777 Timestamp      b Bereq: 1533799301.686184 0.000071 0.000071
+--       32777 Timestamp      b Beresp: 1533799301.686378 0.000264 0.000194
+--       32777 BerespProtocol b HTTP/1.1
+--       32777 BerespStatus   b 200
+--       32777 BerespReason   b OK
+--       32777 BerespHeader   b Cache-Control: max-age=0
+--       32777 BerespHeader   b Server: testbackend.go
+--       32777 BerespHeader   b Date: Thu, 09 Aug 2018 07:21:41 GMT
+--       32777 BerespHeader   b Content-Length: 41
+--       32777 BerespHeader   b Content-Type: text/html; charset=utf-8
+--       32777 TTL            b RFC 0 10 0 1533799302 1533799302 1533799301 0 0 cacheable
+--       32777 VCL_call       b BACKEND_RESPONSE
+--       32777 TTL            b VCL 120 10 0 1533799302 cacheable
+--       32777 TTL            b VCL 120 10 0 1533799302 uncacheable
+--       32777 VCL_return     b deliver
+--       32777 Storage        b malloc Transient
+--       32777 Fetch_Body     b 3 length -
+--       32777 BackendReuse   b 30 boot.test
+--       32777 Timestamp      b BerespBody: 1533799301.686499 0.000386 0.000121
+--       32777 Length         b 41
+--       32777 BereqAcct      b 158 0 158 166 41 207
+--       32777 End            b 
+
+*              << Request  >>   15        
+-           15 Begin          c req 14 rxreq
+-           15 Timestamp      c Start: 1533799317.220823 0.000000 0.000000
+-           15 Timestamp      c Req: 1533799317.220823 0.000000 0.000000
+-           15 ReqStart       c 127.0.0.1 38238 a0
+-           15 ReqMethod      c GET
+-           15 ReqURL         c /uncacheable
+-           15 ReqProtocol    c HTTP/1.1
+-           15 ReqHeader      c Host: localhost:8080
+-           15 ReqHeader      c User-Agent: curl/7.52.1
+-           15 ReqHeader      c Accept: */*
+-           15 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-           15 VCL_call       c RECV
+-           15 VCL_return     c hash
+-           15 VCL_call       c HASH
+-           15 VCL_return     c lookup
+-           15 HitMiss        c 32777 104.465555
+-           15 VCL_call       c MISS
+-           15 VCL_return     c fetch
+-           15 Link           c bereq 16 fetch
+-           15 Timestamp      c Fetch: 1533799317.221021 0.000198 0.000198
+-           15 RespProtocol   c HTTP/1.1
+-           15 RespStatus     c 503
+-           15 RespReason     c Backend fetch failed
+-           15 RespHeader     c Date: Thu, 09 Aug 2018 07:21:57 GMT
+-           15 RespHeader     c Server: Varnish
+-           15 RespHeader     c Content-Type: text/html; charset=utf-8
+-           15 RespHeader     c Retry-After: 5
+-           15 RespHeader     c X-Varnish: 15
+-           15 RespHeader     c Age: 0
+-           15 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-           15 VCL_call       c DELIVER
+-           15 VCL_return     c deliver
+-           15 Timestamp      c Process: 1533799317.221040 0.000217 0.000019
+-           15 RespHeader     c Content-Length: 279
+-           15 RespHeader     c Connection: keep-alive
+-           15 Timestamp      c Resp: 1533799317.221071 0.000248 0.000031
+-           15 ReqAcct        c 89 0 89 247 279 526
+-           15 End            c 
+**             << BeReq    >>   16        
+--          16 Begin          b bereq 15 fetch
+--          16 Timestamp      b Start: 1533799317.220906 0.000000 0.000000
+--          16 BereqMethod    b GET
+--          16 BereqURL       b /uncacheable
+--          16 BereqProtocol  b HTTP/1.1
+--          16 BereqHeader    b Host: localhost:8080
+--          16 BereqHeader    b User-Agent: curl/7.52.1
+--          16 BereqHeader    b Accept: */*
+--          16 BereqHeader    b X-Forwarded-For: 127.0.0.1
+--          16 BereqHeader    b Accept-Encoding: gzip
+--          16 BereqHeader    b X-Varnish: 16
+--          16 VCL_call       b BACKEND_FETCH
+--          16 VCL_return     b fetch
+--          16 FetchError     b backend boot.test: unhealthy
+--          16 Timestamp      b Beresp: 1533799317.220936 0.000030 0.000030
+--          16 Timestamp      b Error: 1533799317.220939 0.000033 0.000003
+--          16 BerespProtocol b HTTP/1.1
+--          16 BerespStatus   b 503
+--          16 BerespReason   b Service Unavailable
+--          16 BerespReason   b Backend fetch failed
+--          16 BerespHeader   b Date: Thu, 09 Aug 2018 07:21:57 GMT
+--          16 BerespHeader   b Server: Varnish
+--          16 VCL_call       b BACKEND_ERROR
+--          16 BerespHeader   b Content-Type: text/html; charset=utf-8
+--          16 BerespHeader   b Retry-After: 5
+--          16 VCL_return     b deliver
+--          16 Storage        b malloc Transient
+--          16 Length         b 279
+--          16 BereqAcct      b 0 0 0 0 0 0
+--          16 End            b 
+
+*              << Request  >>   32779     
+-        32779 Begin          c req 32778 rxreq
+-        32779 Timestamp      c Start: 1533799322.545502 0.000000 0.000000
+-        32779 Timestamp      c Req: 1533799322.545502 0.000000 0.000000
+-        32779 ReqStart       c 127.0.0.1 38272 a0
+-        32779 ReqMethod      c GET
+-        32779 ReqURL         c /uncacheable
+-        32779 ReqProtocol    c HTTP/1.1
+-        32779 ReqHeader      c Host: localhost:8080
+-        32779 ReqHeader      c User-Agent: curl/7.52.1
+-        32779 ReqHeader      c Accept: */*
+-        32779 ReqHeader      c X-Forwarded-For: 127.0.0.1
+-        32779 VCL_call       c RECV
+-        32779 VCL_return     c hash
+-        32779 VCL_call       c HASH
+-        32779 VCL_return     c lookup
+-        32779 HitMiss        c 32777 99.140876
+-        32779 VCL_call       c MISS
+-        32779 VCL_return     c fetch
+-        32779 Link           c bereq 32780 fetch
+-        32779 Timestamp      c Fetch: 1533799322.545855 0.000353 0.000353
+-        32779 RespProtocol   c HTTP/1.1
+-        32779 RespStatus     c 200
+-        32779 RespReason     c OK
+-        32779 RespHeader     c Cache-Control: max-age=0
+-        32779 RespHeader     c Server: testbackend.go
+-        32779 RespHeader     c Date: Thu, 09 Aug 2018 07:22:02 GMT
+-        32779 RespHeader     c Content-Length: 41
+-        32779 RespHeader     c Content-Type: text/html; charset=utf-8
+-        32779 RespHeader     c X-Varnish: 32779
+-        32779 RespHeader     c Age: 0
+-        32779 RespHeader     c Via: 1.1 varnish (Varnish/6.0)
+-        32779 VCL_call       c DELIVER
+-        32779 VCL_return     c deliver
+-        32779 Timestamp      c Process: 1533799322.545867 0.000365 0.000012
+-        32779 RespHeader     c Accept-Ranges: bytes
+-        32779 RespHeader     c Connection: keep-alive
+-        32779 Timestamp      c Resp: 1533799322.545897 0.000396 0.000031
+-        32779 ReqAcct        c 89 0 89 270 41 311
+-        32779 End            c 
+**             << BeReq    >>   32780     
+--       32780 Begin          b bereq 32779 fetch
+--       32780 Timestamp      b Start: 1533799322.545569 0.000000 0.000000
+--       32780 BereqMethod    b GET
+--       32780 BereqURL       b /uncacheable
+--       32780 BereqProtocol  b HTTP/1.1
+--       32780 BereqHeader    b Host: localhost:8080
+--       32780 BereqHeader    b User-Agent: curl/7.52.1
+--       32780 BereqHeader    b Accept: */*
+--       32780 BereqHeader    b X-Forwarded-For: 127.0.0.1
+--       32780 BereqHeader    b Accept-Encoding: gzip
+--       32780 BereqHeader    b X-Varnish: 32780
+--       32780 VCL_call       b BACKEND_FETCH
+--       32780 VCL_return     b fetch
+--       32780 BackendOpen    b 30 boot.test 127.0.0.1 39659 127.0.0.1 37230
+--       32780 BackendStart   b 127.0.0.1 39659
+--       32780 Timestamp      b Bereq: 1533799322.545640 0.000070 0.000070
+--       32780 Timestamp      b Beresp: 1533799322.545800 0.000231 0.000160
+--       32780 BerespProtocol b HTTP/1.1
+--       32780 BerespStatus   b 200
+--       32780 BerespReason   b OK
+--       32780 BerespHeader   b Cache-Control: max-age=0
+--       32780 BerespHeader   b Server: testbackend.go
+--       32780 BerespHeader   b Date: Thu, 09 Aug 2018 07:22:02 GMT
+--       32780 BerespHeader   b Content-Length: 41
+--       32780 BerespHeader   b Content-Type: text/html; charset=utf-8
+--       32780 TTL            b RFC 0 10 0 1533799323 1533799323 1533799322 0 0 cacheable
+--       32780 VCL_call       b BACKEND_RESPONSE
+--       32780 TTL            b VCL 120 10 0 1533799323 cacheable
+--       32780 TTL            b VCL 120 10 0 1533799323 uncacheable
+--       32780 VCL_return     b deliver
+--       32780 Storage        b malloc Transient
+--       32780 Fetch_Body     b 3 length -
+--       32780 BackendReuse   b 30 boot.test
+--       32780 Timestamp      b BerespBody: 1533799322.545850 0.000281 0.000050
+--       32780 Length         b 41
+--       32780 BereqAcct      b 158 0 158 166 41 207
+--       32780 End            b 
+

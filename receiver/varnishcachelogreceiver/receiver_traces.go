@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"runtime/debug"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/metadata"
 	varnishlog "gitlab.com/uplex/varnish/varnishapi/pkg/log"
@@ -16,6 +18,18 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
+)
+
+// vslIdleSleep bounds the sleep between polls when the live VSL buffer
+// is momentarily empty (NextTxGroup returned EOL). Without this sleep
+// the CPU usage will stay at 100%, because the loop will query the VSL
+// as often as possible.
+const vslIdleSleep = 10 * time.Millisecond
+
+// VSM Retry with exponential backoff on attach failures.
+const (
+	vslAttachMaxAttempts    = 10
+	vslAttachInitialBackoff = 100 * time.Millisecond
 )
 
 // vslFatalStatus maps terminal VSL statuses to their log messages.
@@ -42,8 +56,8 @@ func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host)
 		return fmt.Errorf("failed to set vsm timeout: %w", err)
 	}
 
-	if err := vsm.Attach(v.cfg.WorkingDirectory); err != nil {
-		return fmt.Errorf("failed to attach to vsm: %w", err)
+	if err := attachVSMWithRetry(ctx, v.set.Logger, vsm, v.cfg.WorkingDirectory); err != nil {
+		return fmt.Errorf("failed to attach to vsm after %d attempts: %w", vslAttachMaxAttempts, err)
 	}
 
 	vsmCursor, err := vsm.NewCursor()
@@ -55,11 +69,21 @@ func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host)
 	if err != nil {
 		return fmt.Errorf("failed to create vsm query: %w", err)
 	}
+	v.set.Logger.Info("varnishcachelog receiver successfully attached to VSM", zap.String("working_directory", v.cfg.WorkingDirectory), zap.String("vsl_query", v.cfg.VSLQuery))
 
 	v.wg.Go(func() {
 		defer func() {
 			vsmCursor.Delete()
 			vsm.Release()
+		}()
+		defer func() {
+			if r := recover(); r != nil {
+				v.set.Logger.Error(
+					"varnishcachelog receiver goroutine panicked; stopping trace ingestion",
+					zap.Any("panic", r),
+					zap.ByteString("stack", debug.Stack()),
+				)
+			}
 		}()
 		for {
 			select {
@@ -68,6 +92,11 @@ func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host)
 			default:
 				txGrp, txStatus := vsmQuery.NextTxGroup()
 				if txStatus == varnishlog.EOL {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(vslIdleSleep):
+					}
 					continue
 				}
 				if msg, fatal := vslFatalStatus[txStatus]; fatal {
@@ -87,6 +116,38 @@ func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host)
 func (v varnishcachelogReceiver) Shutdown(_ context.Context) error {
 	v.wg.Wait()
 	return nil
+}
+
+// Retry on the same VSM handle: vsm.Attach calls VSM_ResetError each
+// invocation (see vendored pkg/vsm/vsm.go).
+func attachVSMWithRetry(ctx context.Context, logger *zap.Logger, vsm *varnishlog.Log, workingDirectory string) error {
+	backoff := vslAttachInitialBackoff
+	var lastErr error
+	for attempt := 1; attempt <= vslAttachMaxAttempts; attempt++ {
+		lastErr = vsm.Attach(workingDirectory)
+		if lastErr == nil {
+			if attempt > 1 {
+				logger.Info("vsm attach succeeded after retry", zap.Int("attempt", attempt))
+			}
+			return nil
+		}
+		if attempt == vslAttachMaxAttempts {
+			break
+		}
+		logger.Warn("vsm attach failed, retrying",
+			zap.Int("attempt", attempt),
+			zap.Int("max_attempts", vslAttachMaxAttempts),
+			zap.Duration("backoff", backoff),
+			zap.Error(lastErr),
+		)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return lastErr
 }
 
 func (v varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Traces {
@@ -113,17 +174,11 @@ func (v varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trace
 
 		var parentSpanID pcommon.SpanID
 		if !isRoot {
-			_, tpSpanID, hasTP := extractTraceContext(vtx)
-			switch {
-			case vtx.Type == "bereq" && hasTP:
-				// bereq's own traceparent parent_id is the parent req's Varnish
-				// span-id (VCL only swaps in vcl_recv, not vcl_backend_fetch).
-				parentSpanID = tpSpanID
-			default:
-				parentSpanID = generateSpanID(uint64(tx.ParentVXID))
-				if parentIdx, ok := idxByVXID[tx.ParentVXID]; ok {
-					parentSpanID = resolveSpanID(vtxs[parentIdx])
-				}
+			// Every tx (rxreq, ESI sub, bereq) carries its OWN span-id
+			// via its traceparent header.
+			//parentSpanID = generateSpanID(uint64(tx.ParentVXID))
+			if parentIdx, ok := idxByVXID[tx.ParentVXID]; ok {
+				parentSpanID = resolveSpanID(vtxs[parentIdx])
 			}
 		}
 
@@ -254,7 +309,7 @@ func assignTraceIDs(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, traceRoot
 }
 
 func resolveSpanID(vtx *varnishTransaction) pcommon.SpanID {
-	if _, tpSpanID, ok := extractTraceContext(vtx); ok && vtx.Type != "bereq" {
+	if _, tpSpanID, ok := extractTraceContext(vtx); ok {
 		return tpSpanID
 	}
 	return generateSpanID(vtx.VXID)

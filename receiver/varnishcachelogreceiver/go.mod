@@ -2,6 +2,12 @@ module github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelo
 
 go 1.26
 
+// Local fork of gitlab.com/uplex/varnish/varnishapi v1.0.0 with a fix for
+// the fixed-4096-byte VSL record payload panic in pkg/log/vsl_int.go.
+// See pkg/gitlab.com/uplex/varnish/varnishapi/pkg/log/vsl_int.go for
+// the patch and rationale.
+replace gitlab.com/uplex/varnish/varnishapi => ./pkg/gitlab.com/uplex/varnish/varnishapi
+
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/stretchr/testify v1.11.1

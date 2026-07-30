@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -96,9 +97,27 @@ type varnishTransaction struct {
 	Errors     []string
 	Links      []varnishTransactionLink
 	Events     []varnishTransactionEvent
+	// Cache carries the numeric fields from the VSL `Hit` record. Populated
+	// only for cache-hit transactions (Handling == "hit" or "streaming-hit").
+	// See transformHit for the payload format.
+	Cache *varnishTransactionCacheHit
 	// SLT_Begin: sess, req, bereq
 	Type  string
 	Level uint64
+}
+
+// varnishTransactionCacheHit mirrors the fields of the VSL `Hit` record
+// (`Hit <objVXID> <ttl> <grace> <keep> [<fetched> <clen>]`). Durations are
+// stored in milliseconds (converted from the VSL's float-seconds payload)
+// so downstream consumers can query them as plain integers. TTLMillis may
+// be negative when the object is beyond ttl but still within grace — that
+// is the grace-served hit state which typically triggers Varnish's
+// background revalidation fetch.
+type varnishTransactionCacheHit struct {
+	ObjVXID     uint64
+	TTLMillis   int64
+	GraceMillis int64
+	KeepMillis  int64
 }
 
 type varnishTagTransformerFunc func(vtx *varnishTransaction, rec varnishlog.Record) error
@@ -320,14 +339,18 @@ func transformVCLCall(tx *varnishTransaction, rec varnishlog.Record) error {
 		tx.Handling = "pass"
 	case "PIPE":
 		tx.Handling = "pipe"
+	case "PURGE":
+		tx.Handling = "purge"
 	case "BACKEND_RESPONSE":
 		tx.Handling = "fetch"
 	case "BACKEND_ERROR":
 		tx.Handling = "fetch_error"
 	case "SYNTH":
 		tx.Handling = "synth"
-	default:
-		tx.Handling = strings.ToLower(h)
+	case "HIT":
+		if tx.Handling == "" {
+			tx.Handling = "hit"
+		}
 	}
 	return nil
 }
@@ -393,15 +416,24 @@ func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 	var xid, fetched, clen uint64
 	var ttl, grace, keep float64
 
-	scanned, err := fmt.Sscanf(trimUnprintableChars(rec.Payload.String()), "%d %f %f %f %d %d",
+	scanned, _ := fmt.Sscanf(trimUnprintableChars(rec.Payload.String()), "%d %f %f %f %d %d",
 		&xid, &ttl, &grace, &keep, &fetched, &clen)
-	if err != nil || scanned < 4 {
-		return fmt.Errorf("failed to parse Hit: %s", err)
+	// Sscanf returns io.EOF as err when it reaches end-of-input at scanned<argc,
+	// which is the normal case for the non-streaming Hit payload (4 fields).
+	// Only reject when we did not get the required 4 fields.
+	if scanned < 4 {
+		return fmt.Errorf("failed to parse Hit: scanned=%d payload=%q", scanned, rec.Payload.String())
 	}
 	if scanned == 6 {
 		tx.Handling = "streaming-hit"
 	} else {
 		tx.Handling = "hit"
+	}
+	tx.Cache = &varnishTransactionCacheHit{
+		ObjVXID:     xid,
+		TTLMillis:   int64(ttl * 1000),
+		GraceMillis: int64(grace * 1000),
+		KeepMillis:  int64(keep * 1000),
 	}
 	return nil
 }
@@ -519,9 +551,31 @@ func setVarnishSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Handling != "" {
 		span.Attributes().PutStr("varnish.handling", tx.Handling)
 	}
+	setCacheHitSpanAttrs(span, tx)
 	if len(tx.Resp.Filters) > 0 {
 		span.Attributes().PutStr("varnish.filters", strings.Join(tx.Resp.Filters, " "))
 	}
+}
+
+// setCacheHitSpanAttrs emits `varnish.cache.*` attributes for cache-hit
+// spans. `grace_hit` is true when the object was served past its TTL but
+// still within its grace window; that is the state which triggers Varnish's
+// asynchronous background revalidation, so it is the queryable signal for
+// "why did a bgfetch happen for this URL".
+func setCacheHitSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
+	isHit := tx.Handling == "hit" || tx.Handling == "streaming-hit"
+	if !isHit {
+		return
+	}
+	span.Attributes().PutBool("varnish.cache.hit", true)
+	if tx.Cache == nil {
+		return
+	}
+	graceHit := tx.Cache.TTLMillis <= 0 && tx.Cache.GraceMillis > 0
+	span.Attributes().PutBool("varnish.cache.grace_hit", graceHit)
+	span.Attributes().PutInt("varnish.cache.ttl_ms", tx.Cache.TTLMillis)
+	span.Attributes().PutInt("varnish.cache.grace_ms", tx.Cache.GraceMillis)
+	span.Attributes().PutInt("varnish.cache.keep_ms", tx.Cache.KeepMillis)
 }
 
 func setBackendSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
@@ -572,11 +626,28 @@ func setResponseSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 
 func setSpanName(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Side == "client" {
-		// TODO(thomasklinger1234): Find suitable naming
-		span.SetName(fmt.Sprintf("Varnish %s %s", tx.Reason, tx.Type))
+		// TODO(thomasklinger1234): Find suitable naming - Aljoscha: I'm not sure if this is sufficient, but it will work for the PoC
+		urlPart := "/"
+		parsedUrl, _ := url.Parse(tx.Req.URL)
+		if parsedUrl != nil {
+			splitUrl := strings.Split(parsedUrl.Path, "/")
+			if len(splitUrl) >= 2 {
+				urlPart, _ = url.JoinPath("/", splitUrl[1])
+				if len(splitUrl) > 2 {
+					urlPart = fmt.Sprintf("%s/...", urlPart)
+				}
+			}
+		} else {
+			urlPart = "<invalid-url>"
+		}
+		if tx.Reason == "esi" {
+			span.SetName(fmt.Sprintf("ESI %s %s %s", tx.Req.Method, urlPart, tx.Type))
+		} else {
+			span.SetName(fmt.Sprintf("%s %s %s", tx.Req.Method, urlPart, tx.Type))
+		}
 	}
 	if tx.Side == "backend" {
-		span.SetName(fmt.Sprintf("Varnish to %s %s", tx.Backend.Name, tx.Handling))
+		span.SetName(fmt.Sprintf("handle %s to %s", tx.Handling, tx.Backend.Name))
 	}
 }
 
@@ -603,6 +674,9 @@ func updateSpan(span ptrace.Span, tx *varnishTransaction) error {
 		}
 		span.SetTraceID(sid)
 		span.SetSpanID(tid)
+	}
+	if tx.Resp.Status >= 400 && tx.Resp.Status <= 599 {
+		span.Status().SetCode(ptrace.StatusCodeError)
 	}
 	setHeaderSpanAttrs(span, tx)
 	setVarnishSpanAttrs(span, tx)
