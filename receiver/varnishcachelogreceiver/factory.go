@@ -20,6 +20,10 @@ func NewFactory() receiver.Factory {
 func createDefaultConfig() component.Config {
 	cfg := &Config{
 		Timeout: defaultTimeout,
+		CaptureRequestHeaders: map[string]string{
+			"user-agent": "user_agent.original",
+			"host":       "http.request.header.host",
+		},
 	}
 
 	return cfg

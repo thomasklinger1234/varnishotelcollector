@@ -77,9 +77,22 @@ func hexSpanID(t *testing.T, hexStr string) pcommon.SpanID {
 
 func newTestReceiver(t *testing.T) *varnishcachelogReceiver {
 	t.Helper()
+	cfg := createDefaultConfig().(*Config)
 	return &varnishcachelogReceiver{
-		set: receivertest.NewNopSettings(metadata.Type),
-		cfg: createDefaultConfig().(*Config),
+		set:             receivertest.NewNopSettings(metadata.Type),
+		cfg:             cfg,
+		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+	}
+}
+
+func newTestReceiverWithHeaders(t *testing.T, captured map[string]string) *varnishcachelogReceiver {
+	t.Helper()
+	cfg := createDefaultConfig().(*Config)
+	cfg.CaptureRequestHeaders = captured
+	return &varnishcachelogReceiver{
+		set:             receivertest.NewNopSettings(metadata.Type),
+		cfg:             cfg,
+		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
 	}
 }
 
@@ -92,7 +105,11 @@ func TestBuildTraces_CacheHitRxreqNoChildren(t *testing.T) {
 	const (
 		sessionVXID uint32 = 1
 		rxreqVXID   uint32 = 42
+
+		traceIDHex     = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+		rxreqSpanIDHex = "b1b1b1b1b1b1b1b1"
 	)
+	rxreqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, rxreqSpanIDHex)
 
 	rcv := newTestReceiver(t)
 
@@ -105,6 +122,7 @@ func TestBuildTraces_CacheHitRxreqNoChildren(t *testing.T) {
 			ParentVXID: sessionVXID,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(rxreqVXID), "req", "1", "rxreq"),
+				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
 			},
 		},
 	}
@@ -117,11 +135,11 @@ func TestBuildTraces_CacheHitRxreqNoChildren(t *testing.T) {
 
 	span := spans.At(0)
 
-	wantTraceID := generateTraceID(uint64(rxreqVXID))
-	assert.Equal(t, wantTraceID, span.TraceID(), "cache-hit rxreq must derive trace ID from its own VXID, not fall back to empty")
+	wantTraceID := hexTraceID(t, traceIDHex)
+	assert.Equal(t, wantTraceID, span.TraceID(), "cache-hit rxreq must derive trace ID from its traceparent")
 	assert.NotEqual(t, pcommon.NewTraceIDEmpty(), span.TraceID(), "cache-hit rxreq must not emit the all-zero trace ID")
 
-	assert.Equal(t, generateSpanID(uint64(rxreqVXID)), span.SpanID())
+	assert.Equal(t, hexSpanID(t, rxreqSpanIDHex), span.SpanID())
 	assert.Equal(t, pcommon.NewSpanIDEmpty(), span.ParentSpanID(), "root rxreq must not reference a parent span (the session is never emitted)")
 
 	_, hasVxidParent := span.Attributes().Get("varnish.vxid_parent")
@@ -137,7 +155,8 @@ func TestBuildTraces_TwoCacheHitRxreqsSameSession(t *testing.T) {
 
 	rcv := newTestReceiver(t)
 
-	buildOne := func(rxreqVXID uint32) pcommon.TraceID {
+	buildOne := func(rxreqVXID uint32, traceIDHex, spanIDHex string) pcommon.TraceID {
+		tp := fmt.Sprintf("00-%s-%s-01", traceIDHex, spanIDHex)
 		txGrp := []varnishlog.Tx{
 			{
 				Type:       varnishlog.Req,
@@ -147,6 +166,7 @@ func TestBuildTraces_TwoCacheHitRxreqsSameSession(t *testing.T) {
 				ParentVXID: sessionVXID,
 				Records: []varnishlog.Record{
 					beginRecord(t, uint(rxreqVXID), "req", "1", "rxreq"),
+					reqHeaderRecord(t, uint(rxreqVXID), "traceparent", tp),
 				},
 			},
 		}
@@ -155,8 +175,8 @@ func TestBuildTraces_TwoCacheHitRxreqsSameSession(t *testing.T) {
 		return traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID()
 	}
 
-	traceA := buildOne(42)
-	traceB := buildOne(43)
+	traceA := buildOne(42, "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2", "b2b2b2b2b2b2b2b2")
+	traceB := buildOne(43, "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2", "d2d2d2d2d2d2d2d2")
 
 	assert.NotEqual(t, traceA, traceB, "two rxreqs on the same session must produce distinct traces")
 	assert.NotEqual(t, pcommon.NewTraceIDEmpty(), traceA)
@@ -165,13 +185,19 @@ func TestBuildTraces_TwoCacheHitRxreqsSameSession(t *testing.T) {
 
 // TestBuildTraces_RxreqWithBereqChild covers the happy path the library
 // already normalises: all spans in the group must share the trace ID
-// derived from the root rxreq's VXID, descendants must reference the
-// root as their parent span.
+// derived from the root rxreq's traceparent, descendants must reference
+// the root as their parent span.
 func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 	const (
 		rxreqVXID uint32 = 2
 		bereqVXID uint32 = 3
+
+		traceIDHex     = "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3"
+		rxreqSpanIDHex = "b3b3b3b3b3b3b3b3"
+		bereqSpanIDHex = "c3c3c3c3c3c3c3c3"
 	)
+	rxreqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, rxreqSpanIDHex)
+	bereqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, bereqSpanIDHex)
 
 	rcv := newTestReceiver(t)
 
@@ -184,6 +210,7 @@ func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 			ParentVXID: 0,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(rxreqVXID), "req", "1", "rxreq"),
+				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
 			},
 		},
 		{
@@ -194,6 +221,7 @@ func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 			ParentVXID: rxreqVXID,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
 			},
 		},
 	}
@@ -203,19 +231,21 @@ func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
 	require.Equal(t, 2, spans.Len())
 
-	wantTraceID := generateTraceID(uint64(rxreqVXID))
+	wantTraceID := hexTraceID(t, traceIDHex)
+	wantRxreqSpanID := hexSpanID(t, rxreqSpanIDHex)
+	wantBereqSpanID := hexSpanID(t, bereqSpanIDHex)
 
 	rootSpan := spans.At(0)
 	assert.Equal(t, wantTraceID, rootSpan.TraceID())
-	assert.Equal(t, generateSpanID(uint64(rxreqVXID)), rootSpan.SpanID())
+	assert.Equal(t, wantRxreqSpanID, rootSpan.SpanID())
 	assert.Equal(t, pcommon.NewSpanIDEmpty(), rootSpan.ParentSpanID(), "root must not reference a parent span")
 	_, rootHasVxidParent := rootSpan.Attributes().Get("varnish.vxid_parent")
 	assert.False(t, rootHasVxidParent, "root must not carry varnish.vxid_parent")
 
 	childSpan := spans.At(1)
 	assert.Equal(t, wantTraceID, childSpan.TraceID(), "descendant must share the root trace ID")
-	assert.Equal(t, generateSpanID(uint64(bereqVXID)), childSpan.SpanID())
-	assert.Equal(t, generateSpanID(uint64(rxreqVXID)), childSpan.ParentSpanID(), "bereq must reference the rxreq as its parent span")
+	assert.Equal(t, wantBereqSpanID, childSpan.SpanID())
+	assert.Equal(t, wantRxreqSpanID, childSpan.ParentSpanID(), "bereq must reference the rxreq as its parent span")
 	vxidParent, childHasVxidParent := childSpan.Attributes().Get("varnish.vxid_parent")
 	require.True(t, childHasVxidParent, "descendant must carry varnish.vxid_parent")
 	assert.Equal(t, int64(rxreqVXID), vxidParent.Int())
@@ -227,7 +257,7 @@ func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 // NUL bytes in the Begin payload), rxreqs are children of the session,
 // and each rxreq has its own descendants. buildTraces must:
 //   - drop the session span (not a real trace root)
-//   - emit one trace per rxreq keyed on the rxreq's VXID
+//   - emit one trace per rxreq keyed on the rxreq's traceparent
 //   - keep each descendant in its rxreq ancestor's trace
 //   - NOT merge two rxreqs on the same TCP session into one trace
 func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
@@ -237,7 +267,18 @@ func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
 		rxreqBVXID uint32 = 103
 		bereqAVXID uint32 = 102
 		bereqBVXID uint32 = 104
+
+		traceIDA     = "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4"
+		traceIDB     = "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4"
+		spanIDA      = "1414141414141414"
+		spanIDB      = "2424242424242424"
+		bereqSpanIDA = "3434343434343434"
+		bereqSpanIDB = "4444444444444444"
 	)
+	tpA := fmt.Sprintf("00-%s-%s-01", traceIDA, spanIDA)
+	tpB := fmt.Sprintf("00-%s-%s-01", traceIDB, spanIDB)
+	tpAbereq := fmt.Sprintf("00-%s-%s-01", traceIDA, bereqSpanIDA)
+	tpBbereq := fmt.Sprintf("00-%s-%s-01", traceIDB, bereqSpanIDB)
 
 	rcv := newTestReceiver(t)
 
@@ -250,22 +291,34 @@ func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
 		{
 			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
 			Level: 2, VXID: rxreqAVXID, ParentVXID: sessVXID,
-			Records: []varnishlog.Record{beginRecord(t, uint(rxreqAVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq")},
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqAVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, uint(rxreqAVXID), "traceparent", tpA),
+			},
 		},
 		{
 			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
 			Level: 2, VXID: rxreqBVXID, ParentVXID: sessVXID,
-			Records: []varnishlog.Record{beginRecord(t, uint(rxreqBVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq")},
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqBVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, uint(rxreqBVXID), "traceparent", tpB),
+			},
 		},
 		{
 			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
 			Level: 3, VXID: bereqAVXID, ParentVXID: rxreqAVXID,
-			Records: []varnishlog.Record{beginRecord(t, uint(bereqAVXID), "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch")},
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(bereqAVXID), "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqAVXID), "traceparent", tpAbereq),
+			},
 		},
 		{
 			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
 			Level: 3, VXID: bereqBVXID, ParentVXID: rxreqBVXID,
-			Records: []varnishlog.Record{beginRecord(t, uint(bereqBVXID), "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch")},
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(bereqBVXID), "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqBVXID), "traceparent", tpBbereq),
+			},
 		},
 	}
 
@@ -290,28 +343,28 @@ func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
 
 	rxreqA, ok := find(rxreqAVXID)
 	require.True(t, ok, "rxreq A must be emitted")
-	traceA := generateTraceID(uint64(rxreqAVXID))
-	assert.Equal(t, traceA, rxreqA.TraceID(), "rxreq A trace ID must derive from its own VXID")
+	wantTraceA := hexTraceID(t, traceIDA)
+	assert.Equal(t, wantTraceA, rxreqA.TraceID(), "rxreq A trace ID must derive from its traceparent")
 	assert.Equal(t, pcommon.NewSpanIDEmpty(), rxreqA.ParentSpanID(), "rxreq A must be a trace root")
 	_, rootAHasParent := rxreqA.Attributes().Get("varnish.vxid_parent")
 	assert.False(t, rootAHasParent, "rxreq root must not carry varnish.vxid_parent")
 
 	rxreqB, ok := find(rxreqBVXID)
 	require.True(t, ok, "rxreq B must be emitted")
-	traceB := generateTraceID(uint64(rxreqBVXID))
-	assert.Equal(t, traceB, rxreqB.TraceID())
-	assert.NotEqual(t, traceA, traceB, "two rxreqs on the same session must NOT be merged into one trace")
+	wantTraceB := hexTraceID(t, traceIDB)
+	assert.Equal(t, wantTraceB, rxreqB.TraceID())
+	assert.NotEqual(t, wantTraceA, wantTraceB, "two rxreqs on the same session must NOT be merged into one trace")
 	assert.Equal(t, pcommon.NewSpanIDEmpty(), rxreqB.ParentSpanID())
 
 	bereqA, ok := find(bereqAVXID)
 	require.True(t, ok)
-	assert.Equal(t, traceA, bereqA.TraceID(), "bereq A must inherit rxreq A's trace ID")
-	assert.Equal(t, generateSpanID(uint64(rxreqAVXID)), bereqA.ParentSpanID())
+	assert.Equal(t, wantTraceA, bereqA.TraceID(), "bereq A must inherit rxreq A's trace ID")
+	assert.Equal(t, hexSpanID(t, spanIDA), bereqA.ParentSpanID())
 
 	bereqB, ok := find(bereqBVXID)
 	require.True(t, ok)
-	assert.Equal(t, traceB, bereqB.TraceID(), "bereq B must inherit rxreq B's trace ID")
-	assert.Equal(t, generateSpanID(uint64(rxreqBVXID)), bereqB.ParentSpanID())
+	assert.Equal(t, wantTraceB, bereqB.TraceID(), "bereq B must inherit rxreq B's trace ID")
+	assert.Equal(t, hexSpanID(t, spanIDB), bereqB.ParentSpanID())
 }
 
 // TestBuildTraces_TraceparentDrivesIDs exercises Fix B: when the VCL
@@ -434,49 +487,6 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 	assert.Equal(t, wantEsiSpanID, esiBq.ParentSpanID(), "ESI's bereq parent = ESI's Varnish span, looked up via the VXID chain")
 }
 
-// TestBuildTraces_TraceparentFallback guards against silent breakage:
-// when traceparent is missing or malformed, the receiver must fall back
-// to VXID-derived synthetic IDs and still emit a well-formed trace.
-func TestBuildTraces_TraceparentFallback(t *testing.T) {
-	const (
-		rxreqVXID uint32 = 200
-		bereqVXID uint32 = 201
-	)
-
-	rcv := newTestReceiver(t)
-
-	txGrp := []varnishlog.Tx{
-		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
-			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "not-a-valid-traceparent"),
-			},
-		},
-		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: bereqVXID, ParentVXID: rxreqVXID,
-			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
-			},
-		},
-	}
-
-	traces := rcv.buildTraces(txGrp)
-	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
-	require.Equal(t, 2, spans.Len())
-
-	rxreq := spans.At(0)
-	assert.Equal(t, generateTraceID(uint64(rxreqVXID)), rxreq.TraceID(), "malformed traceparent must fall back to synthetic trace ID")
-	assert.Equal(t, generateSpanID(uint64(rxreqVXID)), rxreq.SpanID(), "malformed traceparent must fall back to synthetic span ID")
-
-	bereq := spans.At(1)
-	assert.Equal(t, generateTraceID(uint64(rxreqVXID)), bereq.TraceID())
-	assert.Equal(t, generateSpanID(uint64(bereqVXID)), bereq.SpanID())
-	assert.Equal(t, generateSpanID(uint64(rxreqVXID)), bereq.ParentSpanID(), "no traceparent on either tx → parent span-id from synthetic lookup on parent VXID")
-}
-
 // TestBuildTraces_NoOtelLinks locks in the removal of OTel Links from
 // emitted spans. The parent-child structure the receiver builds is
 // already fully expressed via SetParentSpanID, so emitting OTel Links
@@ -489,7 +499,15 @@ func TestBuildTraces_NoOtelLinks(t *testing.T) {
 		rxreqVXID uint32 = 300
 		esiVXID   uint32 = 301
 		bereqVXID uint32 = 302
+
+		traceIDHex     = "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
+		rxreqSpanIDHex = "1515151515151515"
+		esiSpanIDHex   = "2525252525252525"
+		bereqSpanIDHex = "3535353535353535"
 	)
+	rxreqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, rxreqSpanIDHex)
+	esiTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, esiSpanIDHex)
+	bereqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, bereqSpanIDHex)
 
 	rcv := newTestReceiver(t)
 
@@ -506,6 +524,7 @@ func TestBuildTraces_NoOtelLinks(t *testing.T) {
 			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
 				linkRec,
 			},
 		},
@@ -514,6 +533,7 @@ func TestBuildTraces_NoOtelLinks(t *testing.T) {
 			Level: 2, VXID: esiVXID, ParentVXID: rxreqVXID,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(esiVXID), "req", fmt.Sprintf("%d", rxreqVXID), "esi"),
+				reqHeaderRecord(t, uint(esiVXID), "traceparent", esiTP),
 			},
 		},
 		{
@@ -521,6 +541,7 @@ func TestBuildTraces_NoOtelLinks(t *testing.T) {
 			Level: 3, VXID: bereqVXID, ParentVXID: esiVXID,
 			Records: []varnishlog.Record{
 				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", esiVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
 			},
 		},
 	}
@@ -551,4 +572,289 @@ func TestBuildTraces_EmptyGroupProducesEmptyTraces(t *testing.T) {
 	traces := rcv.buildTraces(txGrp)
 	assert.Equal(t, 0, traces.SpanCount(), "session-only txGrp must emit zero spans")
 	assert.Equal(t, 0, traces.ResourceSpans().Len(), "must not emit an empty ResourceSpans block")
+}
+
+// TestBuildTraces_ConfiguredHeadersEmitAtConfiguredAttrKeys verifies
+// that each header→attribute mapping in CaptureRequestHeaders results in
+// the header's value being emitted verbatim under the configured
+// attribute name. The receiver applies no derivation: user-agent goes
+// wherever the user says (here, user_agent.original), Host is a plain
+// request-header attribute (never host.name), and any custom header can
+// map to any attribute name. Headers not in the config map must not
+// emit at all, and configured headers absent from VSL must not emit an
+// empty attribute.
+func TestBuildTraces_ConfiguredHeadersEmitAtConfiguredAttrKeys(t *testing.T) {
+	const (
+		rxreqVXID uint32 = 800
+
+		traceIDHex     = "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6"
+		rxreqSpanIDHex = "1616161616161616"
+	)
+	rxreqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, rxreqSpanIDHex)
+
+	rcv := newTestReceiverWithHeaders(t, map[string]string{
+		"user-agent":   "user_agent.original",
+		"host":         "http.request.header.host",
+		"x-request-id": "http.request.header.x_request_id",
+		"x-tenant":     "tenant.id",
+	})
+
+	txGrp := []varnishlog.Tx{{
+		Type:   varnishlog.Req,
+		Reason: varnishlog.RxReq,
+		VXID:   rxreqVXID,
+		Records: []varnishlog.Record{
+			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+			reqHeaderRecord(t, uint(rxreqVXID), "user-agent", "curl/8.0"),
+			reqHeaderRecord(t, uint(rxreqVXID), "host", "example.com"),
+			reqHeaderRecord(t, uint(rxreqVXID), "x-request-id", "req-abc-123"),
+			reqHeaderRecord(t, uint(rxreqVXID), "X-Forwarded-For", "10.0.0.1"),
+		},
+	}}
+
+	attrs := spanAttrsForVXID(t, rcv, txGrp, rxreqVXID)
+
+	assert.Equal(t, "curl/8.0", attrs["user_agent.original"])
+	assert.Equal(t, "example.com", attrs["http.request.header.host"], "host emits at its configured attribute name, verbatim")
+	assert.Equal(t, "req-abc-123", attrs["http.request.header.x_request_id"])
+	_, hasHostName := attrs["host.name"]
+	assert.False(t, hasHostName, "no hardcoded host.name mapping in the app")
+	_, hasXFF := attrs["http.request.header.x_forwarded_for"]
+	assert.False(t, hasXFF, "headers absent from capture map must not emit")
+	_, hasTenant := attrs["tenant.id"]
+	assert.False(t, hasTenant, "configured header not seen in VSL must not emit an empty attribute")
+}
+
+func newTestReceiverRespectSampling(t *testing.T) *varnishcachelogReceiver {
+	t.Helper()
+	cfg := createDefaultConfig().(*Config)
+	cfg.RespectUpstreamSampling = true
+	return &varnishcachelogReceiver{
+		set:             receivertest.NewNopSettings(metadata.Type),
+		cfg:             cfg,
+		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+	}
+}
+
+// TestBuildTraces_RespectUpstreamSampling_SampledEmits: when the root
+// rxreq's traceparent has flags=01 the whole trace (rxreq + bereq) is
+// emitted. Baseline for the sampling gate — no dropping when upstream
+// signals sampled.
+func TestBuildTraces_RespectUpstreamSampling_SampledEmits(t *testing.T) {
+	const (
+		rxreqVXID uint32 = 500
+		bereqVXID uint32 = 501
+
+		traceIDHex     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		rxreqSpanIDHex = "1111111111111111"
+		bereqSpanIDHex = "2222222222222222"
+	)
+	rxreqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, rxreqSpanIDHex)
+	bereqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, bereqSpanIDHex)
+
+	rcv := newTestReceiverRespectSampling(t)
+	txGrp := []varnishlog.Tx{
+		{
+			Type: varnishlog.Req, Reason: varnishlog.RxReq,
+			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+			},
+		},
+		{
+			Type: varnishlog.BeReq, Reason: varnishlog.Fetch,
+			Level: 2, VXID: bereqVXID, ParentVXID: rxreqVXID,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
+			},
+		},
+	}
+	traces := rcv.buildTraces(txGrp)
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	require.Equal(t, 2, spans.Len(), "sampled root must emit root + descendant spans")
+}
+
+// TestBuildTraces_RespectUpstreamSampling_UnsampledDropsWholeGroup:
+// when the root's traceparent has flags=00 the whole trace including
+// its bereqs is dropped. Descendants must not leak through even if
+// their own traceparent (also 00 per VCL propagation) is present.
+func TestBuildTraces_RespectUpstreamSampling_UnsampledDropsWholeGroup(t *testing.T) {
+	const (
+		rxreqVXID uint32 = 510
+		bereqVXID uint32 = 511
+
+		traceIDHex     = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		rxreqSpanIDHex = "3333333333333333"
+		bereqSpanIDHex = "4444444444444444"
+	)
+	rxreqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, rxreqSpanIDHex)
+	bereqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, bereqSpanIDHex)
+
+	rcv := newTestReceiverRespectSampling(t)
+	txGrp := []varnishlog.Tx{
+		{
+			Type: varnishlog.Req, Reason: varnishlog.RxReq,
+			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+			},
+		},
+		{
+			Type: varnishlog.BeReq, Reason: varnishlog.Fetch,
+			Level: 2, VXID: bereqVXID, ParentVXID: rxreqVXID,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
+			},
+		},
+	}
+	traces := rcv.buildTraces(txGrp)
+	assert.Equal(t, 0, traces.SpanCount(), "unsampled root must drop the whole trace including descendants")
+	assert.Equal(t, 0, traces.ResourceSpans().Len(), "no spans emitted must not produce empty ResourceSpans")
+}
+
+// TestBuildTraces_RespectUpstreamSampling_MissingTraceparentDrops
+// exercises the fail-closed contract: when the flag is on and the
+// root carries no traceparent header at all, the trace is dropped.
+func TestBuildTraces_RespectUpstreamSampling_MissingTraceparentDrops(t *testing.T) {
+	const rxreqVXID uint32 = 520
+
+	rcv := newTestReceiverRespectSampling(t)
+	txGrp := []varnishlog.Tx{
+		{
+			Type: varnishlog.Req, Reason: varnishlog.RxReq,
+			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+			},
+		},
+	}
+	traces := rcv.buildTraces(txGrp)
+	assert.Equal(t, 0, traces.SpanCount(), "fail-closed: root without traceparent must drop when RespectUpstreamSampling=true")
+}
+
+// TestBuildTraces_RespectUpstreamSampling_MalformedTraceparentDrops:
+// same fail-closed contract when the traceparent is present but
+// cannot be parsed. Prevents a broken upstream from silently opting
+// every request into being emitted.
+func TestBuildTraces_RespectUpstreamSampling_MalformedTraceparentDrops(t *testing.T) {
+	const rxreqVXID uint32 = 530
+
+	rcv := newTestReceiverRespectSampling(t)
+	txGrp := []varnishlog.Tx{
+		{
+			Type: varnishlog.Req, Reason: varnishlog.RxReq,
+			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "garbage-not-a-tp"),
+			},
+		},
+	}
+	traces := rcv.buildTraces(txGrp)
+	assert.Equal(t, 0, traces.SpanCount(), "fail-closed: malformed traceparent must drop")
+}
+
+// TestBuildTraces_RespectUpstreamSampling_MixedRootsInSession locks
+// in per-trace-root filtering: a Varnish-9 session-rooted txGrp
+// carrying two rxreqs — one sampled, one not — must emit only the
+// sampled rxreq and its bereqs, and drop the unsampled rxreq entirely
+// including its bereqs. Guards against a group-level "all-or-nothing"
+// filter.
+func TestBuildTraces_RespectUpstreamSampling_MixedRootsInSession(t *testing.T) {
+	const (
+		sessVXID   uint32 = 600
+		rxreqAVXID uint32 = 601
+		rxreqBVXID uint32 = 602
+		bereqAVXID uint32 = 603
+		bereqBVXID uint32 = 604
+
+		traceIDA     = "cccccccccccccccccccccccccccccccc"
+		traceIDB     = "dddddddddddddddddddddddddddddddd"
+		spanIDA      = "5555555555555555"
+		spanIDB      = "6666666666666666"
+		bereqSpanIDA = "7777777777777777"
+		bereqSpanIDB = "8888888888888888"
+	)
+	tpA := fmt.Sprintf("00-%s-%s-01", traceIDA, spanIDA)
+	tpB := fmt.Sprintf("00-%s-%s-00", traceIDB, spanIDB)
+	tpAbereq := fmt.Sprintf("00-%s-%s-01", traceIDA, bereqSpanIDA)
+	tpBbereq := fmt.Sprintf("00-%s-%s-00", traceIDB, bereqSpanIDB)
+
+	rcv := newTestReceiverRespectSampling(t)
+	txGrp := []varnishlog.Tx{
+		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 1, VXID: sessVXID, ParentVXID: 0,
+			Records: []varnishlog.Record{beginRecord(t, uint(sessVXID), "sess", "0", "HTTP/1")}},
+		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: rxreqAVXID, ParentVXID: sessVXID,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqAVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, uint(rxreqAVXID), "traceparent", tpA),
+			}},
+		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: rxreqBVXID, ParentVXID: sessVXID,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqBVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, uint(rxreqBVXID), "traceparent", tpB),
+			}},
+		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: bereqAVXID, ParentVXID: rxreqAVXID,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(bereqAVXID), "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqAVXID), "traceparent", tpAbereq),
+			}},
+		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: bereqBVXID, ParentVXID: rxreqBVXID,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(bereqBVXID), "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch"),
+				bereqHeaderRecord(t, uint(bereqBVXID), "traceparent", tpBbereq),
+			}},
+	}
+	traces := rcv.buildTraces(txGrp)
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	require.Equal(t, 2, spans.Len(), "only trace A (sampled) should be emitted: rxreq A + bereq A")
+
+	seen := make(map[uint32]bool)
+	for i := 0; i < spans.Len(); i++ {
+		v, ok := spans.At(i).Attributes().Get("varnish.vxid")
+		require.True(t, ok)
+		seen[uint32(v.Int())] = true
+	}
+	assert.True(t, seen[rxreqAVXID], "sampled rxreq A must be emitted")
+	assert.True(t, seen[bereqAVXID], "sampled trace A's bereq must be emitted")
+	assert.False(t, seen[rxreqBVXID], "unsampled rxreq B must be dropped")
+	assert.False(t, seen[bereqBVXID], "unsampled trace B's bereq must be dropped")
+}
+
+// TestBuildTraces_RespectUpstreamSampling_DisabledEmitsUnsampled locks
+// in the default (backward-compat) behavior: with the flag off, even
+// an explicitly unsampled root (-00) is emitted. Prevents accidental
+// regression that would break deployments relying on downstream
+// tailsampling.
+func TestBuildTraces_RespectUpstreamSampling_DisabledEmitsUnsampled(t *testing.T) {
+	const (
+		rxreqVXID uint32 = 700
+
+		traceIDHex     = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		rxreqSpanIDHex = "9999999999999999"
+	)
+	rxreqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, rxreqSpanIDHex)
+
+	rcv := newTestReceiver(t)
+	txGrp := []varnishlog.Tx{
+		{Type: varnishlog.Req, Reason: varnishlog.RxReq,
+			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Records: []varnishlog.Record{
+				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+			}},
+	}
+	traces := rcv.buildTraces(txGrp)
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	require.Equal(t, 1, spans.Len(), "with RespectUpstreamSampling=false, unsampled traceparent must still emit")
 }

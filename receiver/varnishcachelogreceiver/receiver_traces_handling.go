@@ -67,7 +67,6 @@ type varnishTransactionReq struct {
 	ProtoVersion string
 	HdrBytes     uint64
 	BodyBytes    uint64
-	Headers      map[string]string
 }
 
 type varnishTransactionResp struct {
@@ -78,7 +77,6 @@ type varnishTransactionResp struct {
 	ProtoVersion string
 	HdrBytes     uint64
 	BodyBytes    uint64
-	Headers      map[string]string
 }
 
 type varnishTransaction struct {
@@ -104,6 +102,22 @@ type varnishTransaction struct {
 	// SLT_Begin: sess, req, bereq
 	Type  string
 	Level uint64
+	// capturedHeaders is the receiver's shared list of header→attribute
+	// mappings (lowercase, sorted, requiredCapturedHeader at slot 0).
+	// capturedHeaderValues is a per-tx fixed-size slice indexed the same
+	// way and populated by transformReqHeader.
+	capturedHeaders      []capturedHeader
+	capturedHeaderValues []string
+}
+
+// traceparent returns the captured trace-context header value.
+// requiredCapturedHeader is always at slot 0 by construction of
+// buildCapturedHeaders, so the length check is only defensive.
+func (tx *varnishTransaction) traceparent() string {
+	if len(tx.capturedHeaderValues) == 0 {
+		return ""
+	}
+	return tx.capturedHeaderValues[0]
 }
 
 // varnishTransactionCacheHit mirrors the fields of the VSL `Hit` record
@@ -364,29 +378,26 @@ func transformAnyError(tx *varnishTransaction, rec varnishlog.Record) error {
 	return nil
 }
 
-func transformAnyHeader(_ *varnishTransaction, rec varnishlog.Record) (string, string, error) {
-	hdrName, hdrVal, found := strings.Cut(rec.Payload.String(), ": ")
-	if !found || hdrName == "" || hdrVal == "" {
-		return "", "", fmt.Errorf("invalid tag: %s", rec.Tag.String())
-	}
-	return strings.ToLower(hdrName), hdrVal, nil
-}
-
 func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
-	hdrName, hdrVal, err := transformAnyHeader(tx, rec)
-	if err != nil {
-		return err
+	if len(tx.capturedHeaders) == 0 {
+		return nil
 	}
-	tx.Req.Headers[hdrName] = trimUnprintableChars(hdrVal)
-	return nil
-}
-
-func transformRespHeader(tx *varnishTransaction, rec varnishlog.Record) error {
-	hdrName, hdrVal, err := transformAnyHeader(tx, rec)
-	if err != nil {
-		return err
+	payload := rec.Payload.String()
+	colonIdx := strings.Index(payload, ": ")
+	if colonIdx <= 0 || colonIdx+2 >= len(payload) {
+		var partial string
+		if len(payload) > 5 {
+			partial = payload[:5]
+		}
+		return fmt.Errorf("invalid tag: %s for payload (redacted): %s", rec.Tag.String(), partial)
 	}
-	tx.Resp.Headers[hdrName] = trimUnprintableChars(hdrVal)
+	name := payload[:colonIdx]
+	for i, h := range tx.capturedHeaders {
+		if strings.EqualFold(name, h.Name) {
+			tx.capturedHeaderValues[i] = trimUnprintableChars(payload[colonIdx+2:])
+			return nil
+		}
+	}
 	return nil
 }
 
@@ -468,8 +479,6 @@ var (
 		"FetchError":    transformAnyError,
 		"ReqHeader":     transformReqHeader,
 		"BereqHeader":   transformReqHeader,
-		"RespHeader":    transformRespHeader,
-		"BerespHeader":  transformRespHeader,
 		"Begin":         transformBegin,
 		"Hit":           transformHit,
 	}
@@ -483,47 +492,55 @@ func trimUnprintableChars(s string) string {
 	})
 }
 
-func extractTraceparent(tp string) (pcommon.TraceID, pcommon.SpanID, error) {
+func extractTraceparent(tp string) (pcommon.TraceID, pcommon.SpanID, byte, error) {
 	tid := pcommon.TraceID{}
 	sid := pcommon.SpanID{}
 
 	parts := strings.Split(tp, "-")
 	if len(parts) != 4 {
-		return tid, sid, fmt.Errorf("traceparent has wrong length %d", len(parts))
+		return tid, sid, 0, fmt.Errorf("traceparent has wrong length %d", len(parts))
 	}
 	if parts[0] != "00" {
-		return tid, sid, fmt.Errorf("traceparent has wrong version %q", parts[0])
+		return tid, sid, 0, fmt.Errorf("traceparent has wrong version %q", parts[0])
 	}
 	if len(parts[1]) != 32 {
-		return tid, sid, fmt.Errorf("trace-id has wrong length %d", len(parts[1]))
+		return tid, sid, 0, fmt.Errorf("trace-id has wrong length %d", len(parts[1]))
 	}
 	if len(parts[2]) != 16 {
-		return tid, sid, fmt.Errorf("span-id has wrong length %d", len(parts[1]))
+		return tid, sid, 0, fmt.Errorf("span-id has wrong length %d", len(parts[1]))
 	}
 	if len(parts[3]) != 2 {
-		return tid, sid, fmt.Errorf("flags has wrong length %d", len(parts[1]))
+		return tid, sid, 0, fmt.Errorf("flags has wrong length %d", len(parts[1]))
 	}
 	tidBuf, err := hex.DecodeString(parts[1])
 	if err != nil || len(tidBuf) != 16 {
-		return tid, sid, fmt.Errorf("failed to parse trace-id: %s", err)
+		return tid, sid, 0, fmt.Errorf("failed to parse trace-id: %s", err)
 	}
 	sidBuf, err := hex.DecodeString(parts[2])
 	if err != nil || len(sidBuf) != 8 {
-		return tid, sid, fmt.Errorf("failed to parse span-id: %s", err)
+		return tid, sid, 0, fmt.Errorf("failed to parse span-id: %s", err)
+	}
+	flagsBuf, err := hex.DecodeString(parts[3])
+	if err != nil || len(flagsBuf) != 1 {
+		return tid, sid, 0, fmt.Errorf("failed to parse flags: %s", err)
 	}
 
 	copy(tid[:], tidBuf)
 	copy(sid[:], sidBuf)
 
-	return tid, sid, nil
+	return tid, sid, flagsBuf[0], nil
 }
 
 func setHeaderSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
-	if ua, ok := tx.Req.Headers["user-agent"]; ok {
-		span.Attributes().PutStr(string(semconv.UserAgentOriginalKey), ua)
-	}
-	if host, ok := tx.Req.Headers["host"]; ok {
-		span.Attributes().PutStr(string(semconv.HostNameKey), host)
+	for i, h := range tx.capturedHeaders {
+		if h.AttrKey == "" {
+			continue
+		}
+		val := tx.capturedHeaderValues[i]
+		if val == "" {
+			continue
+		}
+		span.Attributes().PutStr(h.AttrKey, val)
 	}
 }
 
@@ -667,8 +684,8 @@ func setSpanTimestamps(span ptrace.Span, tx *varnishTransaction) {
 }
 
 func updateSpan(span ptrace.Span, tx *varnishTransaction) error {
-	if tp, ok := tx.Req.Headers["traceparent"]; ok {
-		sid, tid, err := extractTraceparent(tp)
+	if tp := tx.traceparent(); tp != "" {
+		sid, tid, _, err := extractTraceparent(tp)
 		if err != nil {
 			return err
 		}

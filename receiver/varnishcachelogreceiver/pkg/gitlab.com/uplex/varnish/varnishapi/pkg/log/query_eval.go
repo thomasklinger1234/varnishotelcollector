@@ -31,6 +31,7 @@ package log
 import (
 	"bytes"
 	"slices"
+	"unicode"
 )
 
 func bitTest(bits [32]byte, tag uint8) bool {
@@ -57,7 +58,16 @@ func (expr qExpr) testVXID(tx Tx) bool {
 }
 
 func (expr qExpr) testRecord(rec Record) bool {
-	payload := rec.Payload
+	// Varnish 9's C VSL record length includes the terminating NUL
+	// byte, and some tags additionally leave trailing \r / \n / other
+	// control bytes in the payload. Left in place they silently break
+	// every operator here: RE2 '$' does not match before those bytes
+	// (inverting !~ semantics), bytes.Equal disagrees on length, and
+	// parseInt64 / parseFloat64 reject the trailing garbage. Mirror
+	// the receiver's trimUnprintableChars policy (non-graphic runes).
+	payload := bytes.TrimRightFunc(rec.Payload, func(r rune) bool {
+		return !unicode.IsGraphic(r)
+	})
 	if len(expr.lhs.prefix) > 0 {
 		l := len(expr.lhs.prefix)
 		if l > len(payload) {

@@ -11,6 +11,34 @@ $defs:
       vsl_query:
         type: string
         description: VSL query 
+      capture_request_headers:
+        type: object
+        additionalProperties:
+          type: string
+        description: |
+          Mapping from request header name (case-insensitive) to the OTel
+          span attribute name the value should be emitted under. The
+          attribute name is used verbatim; no sanitization is applied.
+
+          `traceparent` is always captured internally and cannot be
+          listed here — an entry for it is silently ignored.
+
+          Default:
+            user-agent: user_agent.original
+            host:       http.request.header.host
+      respect_upstream_sampling:
+        type: boolean
+        description: |
+          When true, honor the W3C traceparent `sampled` flag (bit 0
+          of the flags byte) on each trace's root client request. The
+          whole trace (rxreq + all its bereqs and ESI sub-requests) is
+          dropped unless the root carries a valid traceparent with
+          `sampled=1`. Missing or malformed traceparent on the root
+          counts as unsampled (fail-closed) — only enable this when
+          the upstream is trusted to inject traceparent on every
+          traceable request.
+
+          Default: true
 
 description: Config defines configuration for the varnishcachelog receiver.
 allOf:

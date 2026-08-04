@@ -44,13 +44,14 @@ var vslFatalStatus = map[varnishlog.Status]string{
 var _ receiver.Traces = &varnishcachelogReceiver{}
 
 type varnishcachelogReceiver struct {
-	set          receiver.Settings
-	cfg          *Config
-	nextConsumer consumer.Traces
-	wg           sync.WaitGroup
+	set             receiver.Settings
+	cfg             *Config
+	nextConsumer    consumer.Traces
+	capturedHeaders []capturedHeader
+	wg              sync.WaitGroup
 }
 
-func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host) error {
+func (v *varnishcachelogReceiver) Start(ctx context.Context, host component.Host) error {
 	vsm := varnishlog.New()
 	if err := vsm.Timeout(v.cfg.Timeout); err != nil {
 		return fmt.Errorf("failed to set vsm timeout: %w", err)
@@ -113,7 +114,7 @@ func (v varnishcachelogReceiver) Start(ctx context.Context, host component.Host)
 	return nil
 }
 
-func (v varnishcachelogReceiver) Shutdown(_ context.Context) error {
+func (v *varnishcachelogReceiver) Shutdown(_ context.Context) error {
 	v.wg.Wait()
 	return nil
 }
@@ -150,7 +151,7 @@ func attachVSMWithRetry(ctx context.Context, logger *zap.Logger, vsm *varnishlog
 	return lastErr
 }
 
-func (v varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Traces {
+func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Traces {
 	v.logTxGroupDebug(txGrp)
 	vtxs, idxByVXID := v.buildVtxs(txGrp)
 	traceRootVXID := computeTraceRoots(txGrp, vtxs, idxByVXID)
@@ -169,8 +170,16 @@ func (v varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trace
 		vtx := vtxs[i]
 		isRoot := tx.VXID == traceRootVXID[i]
 		txTraceID := traceIDByRoot[traceRootVXID[i]]
-
-		spanID := resolveSpanID(vtx)
+		_, spanID, flags, tpOK := extractTraceContext(vtx)
+		if !tpOK {
+			v.set.Logger.Error("failed to extract trace context from tx", zap.Int64("vxid", int64(tx.VXID)))
+			continue
+		}
+		if v.cfg.RespectUpstreamSampling {
+			if flags&0x01 == 0 {
+				continue
+			}
+		}
 
 		var parentSpanID pcommon.SpanID
 		if !isRoot {
@@ -210,7 +219,7 @@ func (v varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trace
 	return traces
 }
 
-func (v varnishcachelogReceiver) logTxGroupDebug(txGrp []varnishlog.Tx) {
+func (v *varnishcachelogReceiver) logTxGroupDebug(txGrp []varnishlog.Tx) {
 	ce := v.set.Logger.Check(zap.DebugLevel, "buildTraces")
 	if ce == nil {
 		return
@@ -245,7 +254,7 @@ func (v varnishcachelogReceiver) logTxGroupDebug(txGrp []varnishlog.Tx) {
 	)
 }
 
-func (v varnishcachelogReceiver) buildVtxs(txGrp []varnishlog.Tx) ([]*varnishTransaction, map[uint32]int) {
+func (v *varnishcachelogReceiver) buildVtxs(txGrp []varnishlog.Tx) ([]*varnishTransaction, map[uint32]int) {
 	vtxs := make([]*varnishTransaction, len(txGrp))
 	idxByVXID := make(map[uint32]int, len(txGrp))
 	for i, tx := range txGrp {
@@ -299,7 +308,7 @@ func assignTraceIDs(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, traceRoot
 		if root == 0 || tx.VXID != root {
 			continue
 		}
-		if tid, _, ok := extractTraceContext(vtxs[i]); ok {
+		if tid, _, _, ok := extractTraceContext(vtxs[i]); ok {
 			traceIDByRoot[root] = tid
 		} else {
 			traceIDByRoot[root] = generateTraceID(uint64(root))
@@ -309,39 +318,35 @@ func assignTraceIDs(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, traceRoot
 }
 
 func resolveSpanID(vtx *varnishTransaction) pcommon.SpanID {
-	if _, tpSpanID, ok := extractTraceContext(vtx); ok {
+	if _, tpSpanID, _, ok := extractTraceContext(vtx); ok {
 		return tpSpanID
 	}
 	return generateSpanID(vtx.VXID)
 }
 
-func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.SpanID, bool) {
-	tp, ok := vtx.Req.Headers["traceparent"]
-	if !ok {
-		return pcommon.TraceID{}, pcommon.SpanID{}, false
+func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.SpanID, byte, bool) {
+	tp := vtx.traceparent()
+	if tp == "" {
+		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
 	}
-	tid, sid, err := extractTraceparent(tp)
+	tid, sid, flags, err := extractTraceparent(tp)
 	if err != nil {
-		return pcommon.TraceID{}, pcommon.SpanID{}, false
+		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
 	}
-	return tid, sid, true
+	return tid, sid, flags, true
 }
 
-func (v varnishcachelogReceiver) buildVtx(tx varnishlog.Tx) *varnishTransaction {
+func (v *varnishcachelogReceiver) buildVtx(tx varnishlog.Tx) *varnishTransaction {
 	vtx := &varnishTransaction{
-		VXID: uint64(tx.VXID),
-		Req: varnishTransactionReq{
-			Headers: make(map[string]string),
-		},
-		Resp: varnishTransactionResp{
-			Headers: make(map[string]string),
-		},
-		Events: make([]varnishTransactionEvent, 0),
-		Errors: make([]string, 0),
-		Logs:   make([]string, 0),
-		Links:  make([]varnishTransactionLink, 0),
-		Side:   tx.Type.String(),
-		Reason: tx.Reason.String(),
+		VXID:                 uint64(tx.VXID),
+		Events:               make([]varnishTransactionEvent, 0),
+		Errors:               make([]string, 0),
+		Logs:                 make([]string, 0),
+		Links:                make([]varnishTransactionLink, 0),
+		Side:                 tx.Type.String(),
+		Reason:               tx.Reason.String(),
+		capturedHeaders:      v.capturedHeaders,
+		capturedHeaderValues: make([]string, len(v.capturedHeaders)),
 	}
 	for _, txRec := range tx.Records {
 		switch txRec.Type {
@@ -361,9 +366,10 @@ func (v varnishcachelogReceiver) buildVtx(tx varnishlog.Tx) *varnishTransaction 
 
 func newVarnishcacheLogReceiver(set receiver.Settings, config *Config, nextConsumer consumer.Traces) receiver.Traces {
 	return &varnishcachelogReceiver{
-		set:          set,
-		cfg:          config,
-		nextConsumer: nextConsumer,
+		set:             set,
+		cfg:             config,
+		nextConsumer:    nextConsumer,
+		capturedHeaders: buildCapturedHeaders(config.CaptureRequestHeaders),
 	}
 }
 

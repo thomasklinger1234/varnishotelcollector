@@ -138,6 +138,203 @@ func TestTestRecord(t *testing.T) {
 	}
 }
 
+// Regression: on Varnish 9 the C VSL record length includes the terminating
+// NUL byte, so Payload arrives as e.g. "/foo\x00". Without trimming, regex
+// $-anchors never match (RE2 $ does not match before \x00), which silently
+// inverts the outcome of "!~" queries and lets blocked URLs through the
+// vsl_query filter. bytes.Equal is affected the same way for string
+// operators. Numeric conversion (parseInt64) also fails on trailing NULs.
+func TestTestRecord_TrailingNUL(t *testing.T) {
+	type nulCase struct {
+		name       string
+		query      string
+		nulPayload string
+		wantMatch  bool
+	}
+	cases := []nulCase{
+		{
+			name:       "regex $-anchor match with trailing NUL",
+			query:      `ReqURL ~ "^/varnish/internal/globstatus$"`,
+			nulPayload: "/varnish/internal/globstatus\x00",
+			wantMatch:  true,
+		},
+		{
+			name:       "regex $-anchor nomatch with trailing NUL",
+			query:      `ReqURL !~ "^/varnish/internal/globstatus$"`,
+			nulPayload: "/varnish/internal/globstatus\x00",
+			wantMatch:  false,
+		},
+		{
+			name:       "regex $-anchor with alternation and trailing NUL",
+			query:      `ReqURL !~ "^/cdn-cgi/traceparent(-apm)?$"`,
+			nulPayload: "/cdn-cgi/traceparent\x00",
+			wantMatch:  false,
+		},
+		{
+			name:       "string eq with trailing NUL",
+			query:      `Begin eq "req 118200423 rxreq"`,
+			nulPayload: "req 118200423 rxreq\x00",
+			wantMatch:  true,
+		},
+		{
+			name:       "integer eq with trailing NUL",
+			query:      `RespStatus == 200`,
+			nulPayload: "200\x00",
+			wantMatch:  true,
+		},
+		{
+			name:       "unrelated URL still passes !~ with trailing NUL",
+			query:      `ReqURL !~ "^/varnish/internal/globstatus$"`,
+			nulPayload: "/api/v1/users\x00",
+			wantMatch:  true,
+		},
+		{
+			name:       "regex $-anchor nomatch with trailing CRLF+NUL",
+			query:      `ReqURL !~ "^/varnish/internal/globstatus$"`,
+			nulPayload: "/varnish/internal/globstatus\r\n\x00",
+			wantMatch:  false,
+		},
+		{
+			name:       "regex $-anchor nomatch with multiple trailing NULs",
+			query:      `ReqURL !~ "^/varnish/internal/globstatus$"`,
+			nulPayload: "/varnish/internal/globstatus\x00\x00\x00",
+			wantMatch:  false,
+		},
+		{
+			name:       "regex $-anchor nomatch with trailing tab",
+			query:      `ReqURL !~ "^/varnish/internal/globstatus$"`,
+			nulPayload: "/varnish/internal/globstatus\t\x00",
+			wantMatch:  false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			expr, err := parseQuery(c.query)
+			if err != nil {
+				t.Fatalf("parseQuery(%q): %v", c.query, err)
+			}
+			rec := Record{Payload: []byte(c.nulPayload)}
+			got := expr.testRecord(rec)
+			if got != c.wantMatch {
+				t.Errorf("query=%q payload=%q testRecord()=%v want=%v",
+					c.query, c.nulPayload, got, c.wantMatch)
+			}
+		})
+	}
+}
+
+// reqURLTag looks up the runtime Tag value for "ReqURL". The numeric SLT_*
+// constants come from libvarnishapi at link time so the value cannot be
+// hardcoded.
+func reqURLTag(t *testing.T) Tag {
+	t.Helper()
+	for i, td := range Tags {
+		if td.Legal && td.String == "ReqURL" {
+			return Tag(i)
+		}
+	}
+	t.Fatal("ReqURL tag not present in libvarnishapi Tags table")
+	return 0
+}
+
+// Reproduces the dev setup's leak: a request to /varnish/internal/globstatus
+// hits nginx (404), the VCL restarts and rewrites req.url = "/fallback".
+// Both ReqURL records land in the same Request-grouped txGrp because Request
+// grouping aggregates restart/ESI/bereq sub-transactions.
+//
+// vsl-query semantics are existential: `ReqURL !~ pattern` is true if there
+// EXISTS any ReqURL record in the txGrp whose payload does not match. With
+// two ReqURL records ("/varnish/internal/globstatus" and "/fallback"), the
+// "/fallback" record satisfies the predicate and the whole group leaks
+// through the filter -- even though the group clearly contains a banned URL.
+//
+// The correct query form for "drop groups that contain a banned URL" is
+// group-level negation: `not (ReqURL ~ pattern)`. This test locks that
+// distinction in place so a future refactor cannot silently reintroduce
+// the leak, and documents why the vsl_query in dev/collector/config.yaml
+// must use the `not (~ ...)` form.
+func TestEval_RestartMultiReqURL(t *testing.T) {
+	tag := reqURLTag(t)
+	restartGrp := []Tx{
+		{
+			Type: Req, Level: 1, VXID: 1000,
+			Records: []Record{
+				{Type: Client, Tag: tag, VXID: 1000,
+					Payload: []byte("/varnish/internal/globstatus")},
+			},
+		},
+		{
+			Type: Req, Level: 2, VXID: 1001, ParentVXID: 1000,
+			Records: []Record{
+				{Type: Client, Tag: tag, VXID: 1001,
+					Payload: []byte("/fallback")},
+			},
+		},
+	}
+	unrelatedGrp := []Tx{
+		{
+			Type: Req, Level: 1, VXID: 2000,
+			Records: []Record{
+				{Type: Client, Tag: tag, VXID: 2000,
+					Payload: []byte("/api/v1/users")},
+			},
+		},
+	}
+
+	cases := []struct {
+		name       string
+		query      string
+		txGrp      []Tx
+		wantFilter bool
+	}{
+		{
+			name:       "buggy !~ leaks group with banned+fallback ReqURL",
+			query:      `ReqURL !~ "^/varnish/internal/globstatus$"`,
+			txGrp:      restartGrp,
+			wantFilter: false,
+		},
+		{
+			name:       "correct not(~) filters group containing banned ReqURL",
+			query:      `not (ReqURL ~ "^/varnish/internal/globstatus$")`,
+			txGrp:      restartGrp,
+			wantFilter: true,
+		},
+		{
+			name:       "dev config buggy !~ chain leaks restart group",
+			query:      `ReqURL !~ "^/varnish/internal/globstatus$" and ReqURL !~ "^/tsid" and ReqURL !~ "^/cdn-cgi/traceparent(-apm)?$"`,
+			txGrp:      restartGrp,
+			wantFilter: false,
+		},
+		{
+			name:       "dev config correct not-chain filters restart group",
+			query:      `not (ReqURL ~ "^/varnish/internal/globstatus$") and not (ReqURL ~ "^/tsid") and not (ReqURL ~ "^/cdn-cgi/traceparent(-apm)?$")`,
+			txGrp:      restartGrp,
+			wantFilter: true,
+		},
+		{
+			name:       "correct not-chain keeps unrelated groups",
+			query:      `not (ReqURL ~ "^/varnish/internal/globstatus$") and not (ReqURL ~ "^/tsid") and not (ReqURL ~ "^/cdn-cgi/traceparent(-apm)?$")`,
+			txGrp:      unrelatedGrp,
+			wantFilter: false,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			expr, err := parseQuery(c.query)
+			if err != nil {
+				t.Fatalf("parseQuery(%q): %v", c.query, err)
+			}
+			passes := expr.eval(c.txGrp)
+			filtered := !passes
+			if filtered != c.wantFilter {
+				t.Errorf("query=%q eval=%v filtered=%v wantFilter=%v",
+					c.query, passes, filtered, c.wantFilter)
+			}
+		})
+	}
+}
+
 func BenchmarkTestRecord(b *testing.B) {
 	for _, v := range queryRecTestVec {
 		b.Run(v.name, func(b *testing.B) {
