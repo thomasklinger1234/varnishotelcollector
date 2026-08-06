@@ -205,7 +205,9 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 		if err := updateSpan(span, vtx); err != nil {
 			v.set.Logger.Error("failed to update span", zap.String("span", txTraceID.String()), zap.Error(err))
 		}
-
+		if flags&0x01 == 1 {
+			span.SetFlags(0x01)
+		}
 		span.SetTraceID(txTraceID)
 		span.SetSpanID(spanID)
 		if !isRoot {

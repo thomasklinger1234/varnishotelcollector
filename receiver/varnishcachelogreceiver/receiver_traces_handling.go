@@ -383,8 +383,8 @@ func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 		return nil
 	}
 	payload := rec.Payload.String()
-	colonIdx := strings.Index(payload, ": ")
-	if colonIdx <= 0 || colonIdx+2 >= len(payload) {
+	colonIdx := strings.Index(payload, ":")
+	if colonIdx <= 0 || colonIdx+1 >= len(payload) {
 		var partial string
 		if len(payload) > 5 {
 			partial = payload[:5]
