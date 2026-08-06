@@ -59,6 +59,7 @@ func TestTransformVCLCall_DeliverDoesNotStompHit(t *testing.T) {
 		VXID:   rxreqVXID,
 		Records: []varnishlog.Record{
 			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-09090909090909090909090909090909-0909090909090909-01"),
 			vclCallRecord(t, uint(rxreqVXID), "RECV"),
 			vclCallRecord(t, uint(rxreqVXID), "HASH"),
 			hitRecord(t, uint(rxreqVXID), "32773 9.196981 1.000000 0.000000"),
@@ -87,6 +88,7 @@ func TestTransformHit_GraceHitFlaggedWhenTTLNonPositive(t *testing.T) {
 		VXID:   rxreqVXID,
 		Records: []varnishlog.Record{
 			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a-0a0a0a0a0a0a0a0a-01"),
 			hitRecord(t, uint(rxreqVXID), "32773 -0.500000 1.000000 0.000000"),
 			vclCallRecord(t, uint(rxreqVXID), "HIT"),
 			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),
@@ -112,6 +114,7 @@ func TestTransformHit_StreamingHitSetsHandlingAndHitFlag(t *testing.T) {
 		VXID:   rxreqVXID,
 		Records: []varnishlog.Record{
 			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b-0b0b0b0b0b0b0b0b-01"),
 			hitRecord(t, uint(rxreqVXID), "32773 5.000000 1.000000 0.000000 12345 67890"),
 			vclCallRecord(t, uint(rxreqVXID), "HIT"),
 			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),
@@ -135,6 +138,7 @@ func TestTransformVCLCall_MissDoesNotSetCacheHit(t *testing.T) {
 		VXID:   rxreqVXID,
 		Records: []varnishlog.Record{
 			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c-0c0c0c0c0c0c0c0c-01"),
 			vclCallRecord(t, uint(rxreqVXID), "RECV"),
 			vclCallRecord(t, uint(rxreqVXID), "HASH"),
 			vclCallRecord(t, uint(rxreqVXID), "MISS"),
@@ -165,6 +169,7 @@ func TestTransformVCLCall_LifecyclePhasesNeverSetHandling(t *testing.T) {
 		VXID:   rxreqVXID,
 		Records: []varnishlog.Record{
 			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d-0d0d0d0d0d0d0d0d-01"),
 			vclCallRecord(t, uint(rxreqVXID), "RECV"),
 			vclCallRecord(t, uint(rxreqVXID), "HASH"),
 			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),

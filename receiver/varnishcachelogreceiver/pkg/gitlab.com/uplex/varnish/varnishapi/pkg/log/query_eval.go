@@ -58,13 +58,13 @@ func (expr qExpr) testVXID(tx Tx) bool {
 }
 
 func (expr qExpr) testRecord(rec Record) bool {
-	// Varnish 9's C VSL record length includes the terminating NUL
-	// byte, and some tags additionally leave trailing \r / \n / other
-	// control bytes in the payload. Left in place they silently break
-	// every operator here: RE2 '$' does not match before those bytes
-	// (inverting !~ semantics), bytes.Equal disagrees on length, and
-	// parseInt64 / parseFloat64 reject the trailing garbage. Mirror
-	// the receiver's trimUnprintableChars policy (non-graphic runes).
+	// Defensive trim: VSLC_ptr.payload() (see vsl_int.go LOCAL PATCH) already
+	// strips trailing non-graphic bytes so this is normally a no-op, but
+	// callers that construct a Record directly (tests, future consumers)
+	// still hit this path with raw payloads. Left in place, trailing NUL /
+	// CR / LF would silently break every operator here: regex '$' would
+	// not match, bytes.Equal would disagree on length, parseInt64 /
+	// parseFloat64 would reject the trailing garbage.
 	payload := bytes.TrimRightFunc(rec.Payload, func(r rune) bool {
 		return !unicode.IsGraphic(r)
 	})

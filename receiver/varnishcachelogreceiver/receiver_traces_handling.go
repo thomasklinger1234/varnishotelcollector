@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	varnishlog "gitlab.com/uplex/varnish/varnishapi/pkg/log"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -139,7 +138,7 @@ type varnishTagTransformerFunc func(vtx *varnishTransaction, rec varnishlog.Reco
 func transformVCLLog(tx *varnishTransaction, rec varnishlog.Record) error {
 	parts := strings.Fields(rec.Payload.String())
 	if len(parts) > 0 {
-		tx.Logs = append(tx.Logs, trimUnprintableChars(rec.Payload.String()))
+		tx.Logs = append(tx.Logs, rec.Payload.String())
 	}
 	return nil
 }
@@ -149,7 +148,7 @@ func transformReqURL(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(parts) == 0 {
 		return nil
 	}
-	tx.Req.URL = trimUnprintableChars(parts[0])
+	tx.Req.URL = parts[0]
 	return nil
 }
 
@@ -158,7 +157,7 @@ func transformReqMethod(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(parts) == 0 {
 		return nil
 	}
-	tx.Req.Method = trimUnprintableChars(parts[0])
+	tx.Req.Method = parts[0]
 	return nil
 }
 
@@ -167,7 +166,7 @@ func transformVCLUse(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(parts) == 0 {
 		return nil
 	}
-	tx.VCL = trimUnprintableChars(parts[0])
+	tx.VCL = parts[0]
 	return nil
 }
 
@@ -182,8 +181,8 @@ func transformLink(tx *varnishTransaction, rec varnishlog.Record) error {
 	}
 	tx.Links = append(tx.Links, varnishTransactionLink{
 		VXID:   id,
-		Type:   trimUnprintableChars(parts[0]),
-		Reason: trimUnprintableChars(parts[2]),
+		Type:   parts[0],
+		Reason: parts[2],
 	})
 	return nil
 }
@@ -194,8 +193,8 @@ func transformStorage(tx *varnishTransaction, rec varnishlog.Record) error {
 		return fmt.Errorf("Invalid storage received: %s", rec.Payload.String())
 	}
 	tx.Storage = &varnishTransactionStorage{
-		Name: trimUnprintableChars(parts[0]),
-		Type: trimUnprintableChars(parts[1]),
+		Name: parts[0],
+		Type: parts[1],
 	}
 	return nil
 }
@@ -205,7 +204,7 @@ func transformRespReason(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(parts) == 0 {
 		return nil
 	}
-	tx.Resp.StatusReason = trimUnprintableChars(parts[0])
+	tx.Resp.StatusReason = parts[0]
 	return nil
 }
 
@@ -214,7 +213,7 @@ func transformRespStatus(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(parts) == 0 {
 		return nil
 	}
-	status, err := strconv.ParseUint(strings.TrimRight(parts[0], "\x00"), 10, 64)
+	status, err := strconv.ParseUint(parts[0], 10, 64)
 	if err != nil {
 		return err
 	}
@@ -229,7 +228,7 @@ func transformFilters(tx *varnishTransaction, rec varnishlog.Record) error {
 	}
 	for _, f := range parts {
 		if f != "" {
-			tx.Resp.Filters = append(tx.Resp.Filters, trimUnprintableChars(f))
+			tx.Resp.Filters = append(tx.Resp.Filters, f)
 		}
 	}
 	return nil
@@ -249,7 +248,7 @@ func transformTimestamp(tx *varnishTransaction, rec varnishlog.Record) error {
 	name := strings.Replace(parts[0], ":", "", 1)
 	tx.Events = append(tx.Events, varnishTransactionEvent{
 		Timestamp: ts,
-		Name:      trimUnprintableChars(name),
+		Name:      name,
 	})
 	return nil
 }
@@ -258,7 +257,7 @@ func transformAnyProtocol(rec varnishlog.Record) (string, string, error) {
 	if _, err := splitPayload(rec, 1, 1); err != nil {
 		return "", "", err
 	}
-	proto, protoVer, found := strings.Cut(trimUnprintableChars(rec.Payload.String()), "/")
+	proto, protoVer, found := strings.Cut(rec.Payload.String(), "/")
 	if !found {
 		return "", "", fmt.Errorf("invalid tag: %s", rec.Tag.String())
 	}
@@ -294,9 +293,9 @@ func transformReqStart(tx *varnishTransaction, rec varnishlog.Record) error {
 	if err != nil {
 		return err
 	}
-	tx.Client.Addr = trimUnprintableChars(parts[0])
+	tx.Client.Addr = parts[0]
 	tx.Client.Port = rPort
-	tx.Client.Sock = trimUnprintableChars(parts[2])
+	tx.Client.Sock = parts[2]
 	return nil
 }
 
@@ -309,10 +308,10 @@ func transformBackendOpen(tx *varnishTransaction, rec varnishlog.Record) error {
 	if err != nil {
 		return fmt.Errorf("invalid port number: %s. %s", parts[3], err)
 	}
-	tx.Backend.Name = trimUnprintableChars(parts[1])
-	tx.Backend.Addr = trimUnprintableChars(parts[2])
+	tx.Backend.Name = parts[1]
+	tx.Backend.Addr = parts[2]
 	tx.Backend.Port = bePort
-	tx.Backend.ConnReused = trimUnprintableChars(parts[6]) == "reused"
+	tx.Backend.ConnReused = parts[6] == "reused"
 	return nil
 }
 
@@ -321,7 +320,7 @@ func transformAnyAcct(tx *varnishTransaction, rec varnishlog.Record) error {
 		return err
 	}
 	var reqHdrLen, reqBodyLen, reqLen, respHdrLen, respBodyLen, respLen uint64
-	if scanned, err := fmt.Sscanf(trimUnprintableChars(rec.Payload.String()), "%d %d %d %d %d %d", &reqHdrLen, &reqBodyLen, &reqLen, &respHdrLen, &respBodyLen, &respLen); err != nil || scanned != 6 {
+	if scanned, err := fmt.Sscanf(rec.Payload.String(), "%d %d %d %d %d %d", &reqHdrLen, &reqBodyLen, &reqLen, &respHdrLen, &respBodyLen, &respLen); err != nil || scanned != 6 {
 		return fmt.Errorf("failed to parse Acct: %s", err)
 	}
 	tx.Req.HdrBytes = reqHdrLen
@@ -336,7 +335,7 @@ func transformVCLReturn(tx *varnishTransaction, rec varnishlog.Record) error {
 	if err != nil {
 		return err
 	}
-	tx.Handling = trimUnprintableChars(parts[0])
+	tx.Handling = parts[0]
 	return nil
 }
 
@@ -345,7 +344,7 @@ func transformVCLCall(tx *varnishTransaction, rec varnishlog.Record) error {
 	if err != nil {
 		return err
 	}
-	h := trimUnprintableChars(parts[0])
+	h := parts[0]
 	switch h {
 	case "MISS":
 		tx.Handling = "miss"
@@ -374,7 +373,7 @@ func transformAnyError(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(parts) == 0 {
 		return nil
 	}
-	tx.Errors = append(tx.Errors, trimUnprintableChars(rec.Tag.String()))
+	tx.Errors = append(tx.Errors, rec.Tag.String())
 	return nil
 }
 
@@ -394,7 +393,7 @@ func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 	name := payload[:colonIdx]
 	for i, h := range tx.capturedHeaders {
 		if strings.EqualFold(name, h.Name) {
-			tx.capturedHeaderValues[i] = trimUnprintableChars(payload[colonIdx+2:])
+			tx.capturedHeaderValues[i] = payload[colonIdx+2:]
 			return nil
 		}
 	}
@@ -411,7 +410,7 @@ func transformBegin(tx *varnishTransaction, rec varnishlog.Record) error {
 		return err
 	}
 	if len(parts) > 3 {
-		lvl, err := strconv.ParseUint(trimUnprintableChars(parts[3]), 10, 64)
+		lvl, err := strconv.ParseUint(parts[3], 10, 64)
 		if err != nil {
 			return err
 		}
@@ -419,7 +418,7 @@ func transformBegin(tx *varnishTransaction, rec varnishlog.Record) error {
 	}
 	tx.VXIDParent = xid
 	tx.Type = parts[0]
-	tx.Reason = trimUnprintableChars(parts[2])
+	tx.Reason = parts[2]
 	return nil
 }
 
@@ -427,7 +426,7 @@ func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 	var xid, fetched, clen uint64
 	var ttl, grace, keep float64
 
-	scanned, _ := fmt.Sscanf(trimUnprintableChars(rec.Payload.String()), "%d %f %f %f %d %d",
+	scanned, _ := fmt.Sscanf(rec.Payload.String(), "%d %f %f %f %d %d",
 		&xid, &ttl, &grace, &keep, &fetched, &clen)
 	// Sscanf returns io.EOF as err when it reaches end-of-input at scanned<argc,
 	// which is the normal case for the non-streaming Hit payload (4 fields).
@@ -483,14 +482,6 @@ var (
 		"Hit":           transformHit,
 	}
 )
-
-// remove control characters from VSL entries. those are found on the last "part" of
-// VSL records
-func trimUnprintableChars(s string) string {
-	return strings.TrimFunc(s, func(r rune) bool {
-		return !unicode.IsGraphic(r)
-	})
-}
 
 func extractTraceparent(tp string) (pcommon.TraceID, pcommon.SpanID, byte, error) {
 	tid := pcommon.TraceID{}

@@ -267,12 +267,14 @@ func (v *varnishcachelogReceiver) buildVtxs(txGrp []varnishlog.Tx) ([]*varnishTr
 }
 
 // Walk each tx up its ParentVXID chain until we hit a client rxreq — that
-// rxreq is the trace root. This bypasses the vendored library's broken
-// reason parsing on Varnish 9 (payloads carry a trailing NUL byte which
-// makes bytes.Equal fail for rxreq/fetch/HTTP/1 but not for esi/restart,
-// so the library ends up building session-rooted txGrps that merge every
-// keep-alive request into one trace). vtx.Type and vtx.Reason come from
-// our own strings.Fields + trimUnprintableChars pass, which handles NUL.
+// rxreq is the trace root. With the fork's payload trim in place (see
+// VSLC_ptr.payload() LOCAL PATCH in pkg/.../vsl_int.go), the vendored
+// library's Request grouping already returns one txGrp per rxreq, so this
+// walk is normally trivial. It stays as a defensive layer that keeps the
+// receiver correct even when a txGrp arrives session-rooted (multiple
+// keep-alive rxreqs sharing one Sess parent) — assign each tx to its own
+// rxreq ancestor and drop txs whose ancestor walk never reaches an rxreq
+// (bare sessions have traceRootVXID[i] == 0 and are skipped in buildTraces).
 func computeTraceRoots(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, idxByVXID map[uint32]int) []uint32 {
 	traceRootVXID := make([]uint32, len(txGrp))
 	for i := range txGrp {
