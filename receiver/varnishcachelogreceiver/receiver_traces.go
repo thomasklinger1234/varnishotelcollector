@@ -2,7 +2,6 @@ package varnishcachelogreceiver
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"runtime/debug"
@@ -119,8 +118,6 @@ func (v *varnishcachelogReceiver) Shutdown(_ context.Context) error {
 	return nil
 }
 
-// Retry on the same VSM handle: vsm.Attach calls VSM_ResetError each
-// invocation (see vendored pkg/vsm/vsm.go).
 func attachVSMWithRetry(ctx context.Context, logger *zap.Logger, vsm *varnishlog.Log, workingDirectory string) error {
 	backoff := vslAttachInitialBackoff
 	var lastErr error
@@ -172,7 +169,17 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 		txTraceID := traceIDByRoot[traceRootVXID[i]]
 		_, spanID, flags, tpOK := extractTraceContext(vtx)
 		if !tpOK {
-			v.set.Logger.Error("failed to extract trace context from tx", zap.Int64("vxid", int64(tx.VXID)))
+			v.set.Logger.Error("dropping tx: no traceparent header (synthetic IDs not supported)",
+				zap.Int64("vxid", int64(tx.VXID)),
+				zap.Uint32("root_vxid", traceRootVXID[i]),
+			)
+			continue
+		}
+		if txTraceID.IsEmpty() {
+			v.set.Logger.Error("dropping tx: root has no traceparent (synthetic IDs not supported)",
+				zap.Int64("vxid", int64(tx.VXID)),
+				zap.Uint32("root_vxid", traceRootVXID[i]),
+			)
 			continue
 		}
 		if v.cfg.RespectUpstreamSampling {
@@ -183,12 +190,23 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 
 		var parentSpanID pcommon.SpanID
 		if !isRoot {
-			// Every tx (rxreq, ESI sub, bereq) carries its OWN span-id
-			// via its traceparent header.
-			//parentSpanID = generateSpanID(uint64(tx.ParentVXID))
-			if parentIdx, ok := idxByVXID[tx.ParentVXID]; ok {
-				parentSpanID = resolveSpanID(vtxs[parentIdx])
+			parentIdx, ok := idxByVXID[tx.ParentVXID]
+			if !ok {
+				v.set.Logger.Error("dropping tx: parent tx not found in txGrp",
+					zap.Int64("vxid", int64(tx.VXID)),
+					zap.Uint32("parent_vxid", tx.ParentVXID),
+				)
+				continue
 			}
+			_, pSpanID, _, pOK := extractTraceContext(vtxs[parentIdx])
+			if !pOK {
+				v.set.Logger.Error("dropping tx: parent tx has no traceparent (parent_span_id unresolvable)",
+					zap.Int64("vxid", int64(tx.VXID)),
+					zap.Uint32("parent_vxid", tx.ParentVXID),
+				)
+				continue
+			}
+			parentSpanID = pSpanID
 		}
 
 		span := scopeSpans.Spans().AppendEmpty()
@@ -264,15 +282,8 @@ func (v *varnishcachelogReceiver) buildVtxs(txGrp []varnishlog.Tx) ([]*varnishTr
 	return vtxs, idxByVXID
 }
 
-// Walk each tx up its ParentVXID chain until we hit a client rxreq — that
-// rxreq is the trace root. With the fork's payload trim in place (see
-// VSLC_ptr.payload() LOCAL PATCH in pkg/.../vsl_int.go), the vendored
-// library's Request grouping already returns one txGrp per rxreq, so this
-// walk is normally trivial. It stays as a defensive layer that keeps the
-// receiver correct even when a txGrp arrives session-rooted (multiple
-// keep-alive rxreqs sharing one Sess parent) — assign each tx to its own
-// rxreq ancestor and drop txs whose ancestor walk never reaches an rxreq
-// (bare sessions have traceRootVXID[i] == 0 and are skipped in buildTraces).
+// computeTraceRoots walks each tx up its ParentVXID chain until we hit a client rxreq — that
+// rxreq is the trace root.
 func computeTraceRoots(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, idxByVXID map[uint32]int) []uint32 {
 	traceRootVXID := make([]uint32, len(txGrp))
 	for i := range txGrp {
@@ -296,13 +307,6 @@ func computeTraceRoots(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, idxByV
 	return traceRootVXID
 }
 
-// Prefer trace IDs and per-hop span IDs from the W3C traceparent header
-// the VCL propagates (see dev/varnish/otel.vcl). The receiver falls back
-// to VXID-derived synthetic IDs when no traceparent is present so unit
-// tests and non-VCL deployments keep working. Only the root rxreq's
-// traceparent supplies the trace ID for the whole subtree — descendants
-// (ESI subs, bereqs) never override it, so keep-alive requests and ESI
-// cascades stay in one trace with the same ID nginx/backends see.
 func assignTraceIDs(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, traceRootVXID []uint32) map[uint32]pcommon.TraceID {
 	traceIDByRoot := make(map[uint32]pcommon.TraceID, len(txGrp))
 	for i, tx := range txGrp {
@@ -312,18 +316,9 @@ func assignTraceIDs(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, traceRoot
 		}
 		if tid, _, _, ok := extractTraceContext(vtxs[i]); ok {
 			traceIDByRoot[root] = tid
-		} else {
-			traceIDByRoot[root] = generateTraceID(uint64(root))
 		}
 	}
 	return traceIDByRoot
-}
-
-func resolveSpanID(vtx *varnishTransaction) pcommon.SpanID {
-	if _, tpSpanID, _, ok := extractTraceContext(vtx); ok {
-		return tpSpanID
-	}
-	return generateSpanID(vtx.VXID)
 }
 
 func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.SpanID, byte, bool) {
@@ -381,16 +376,4 @@ func newVarnishcacheLogReceiver(set receiver.Settings, config *Config, nextConsu
 		nextConsumer:    nextConsumer,
 		capturedHeaders: buildCapturedHeaders(config.CaptureRequestHeaders),
 	}
-}
-
-func generateTraceID(vxid uint64) pcommon.TraceID {
-	var id [16]byte
-	binary.BigEndian.PutUint64(id[0:16], vxid)
-	return pcommon.TraceID(id)
-}
-
-func generateSpanID(vxid uint64) pcommon.SpanID {
-	var id [8]byte
-	binary.BigEndian.PutUint64(id[0:8], vxid)
-	return pcommon.SpanID(id)
 }

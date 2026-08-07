@@ -106,9 +106,9 @@ type varnishTransaction struct {
 	capturedHeaders      []capturedHeader
 	capturedHeaderValues []string
 
-	// traceparent parse cache. Set once by extractTraceContext; both
-	// buildTraces and resolveSpanID (parent lookups) hit this path
-	// repeatedly for the same tx.
+	// traceparent parse cache. Set once by extractTraceContext;
+	// buildTraces hits this path repeatedly for the same tx (self
+	// context + parent lookups).
 	tpParsed bool
 	tpOK     bool
 	tpTID    pcommon.TraceID
