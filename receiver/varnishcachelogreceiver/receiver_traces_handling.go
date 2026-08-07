@@ -107,6 +107,15 @@ type varnishTransaction struct {
 	// way and populated by transformReqHeader.
 	capturedHeaders      []capturedHeader
 	capturedHeaderValues []string
+
+	// traceparent parse cache. Set once by extractTraceContext; both
+	// buildTraces and resolveSpanID (parent lookups) hit this path
+	// repeatedly for the same tx. See docs/ram-usage-analysis.md P1.
+	tpParsed bool
+	tpOK     bool
+	tpTID    pcommon.TraceID
+	tpSID    pcommon.SpanID
+	tpFlags  byte
 }
 
 // traceparent returns the captured trace-context header value.
@@ -484,8 +493,8 @@ var (
 )
 
 func extractTraceparent(tp string) (pcommon.TraceID, pcommon.SpanID, byte, error) {
-	tid := pcommon.TraceID{}
-	sid := pcommon.SpanID{}
+	var tid pcommon.TraceID
+	var sid pcommon.SpanID
 
 	parts := strings.Split(tp, "-")
 	if len(parts) != 4 {
@@ -498,27 +507,21 @@ func extractTraceparent(tp string) (pcommon.TraceID, pcommon.SpanID, byte, error
 		return tid, sid, 0, fmt.Errorf("trace-id has wrong length %d", len(parts[1]))
 	}
 	if len(parts[2]) != 16 {
-		return tid, sid, 0, fmt.Errorf("span-id has wrong length %d", len(parts[1]))
+		return tid, sid, 0, fmt.Errorf("span-id has wrong length %d", len(parts[2]))
 	}
 	if len(parts[3]) != 2 {
-		return tid, sid, 0, fmt.Errorf("flags has wrong length %d", len(parts[1]))
+		return tid, sid, 0, fmt.Errorf("flags has wrong length %d", len(parts[3]))
 	}
-	tidBuf, err := hex.DecodeString(parts[1])
-	if err != nil || len(tidBuf) != 16 {
-		return tid, sid, 0, fmt.Errorf("failed to parse trace-id: %s", err)
+	if n, err := hex.Decode(tid[:], []byte(parts[1])); err != nil || n != 16 {
+		return pcommon.TraceID{}, pcommon.SpanID{}, 0, fmt.Errorf("failed to parse trace-id: %w", err)
 	}
-	sidBuf, err := hex.DecodeString(parts[2])
-	if err != nil || len(sidBuf) != 8 {
-		return tid, sid, 0, fmt.Errorf("failed to parse span-id: %s", err)
+	if n, err := hex.Decode(sid[:], []byte(parts[2])); err != nil || n != 8 {
+		return pcommon.TraceID{}, pcommon.SpanID{}, 0, fmt.Errorf("failed to parse span-id: %w", err)
 	}
-	flagsBuf, err := hex.DecodeString(parts[3])
-	if err != nil || len(flagsBuf) != 1 {
-		return tid, sid, 0, fmt.Errorf("failed to parse flags: %s", err)
+	var flagsBuf [1]byte
+	if n, err := hex.Decode(flagsBuf[:], []byte(parts[3])); err != nil || n != 1 {
+		return pcommon.TraceID{}, pcommon.SpanID{}, 0, fmt.Errorf("failed to parse flags: %w", err)
 	}
-
-	copy(tid[:], tidBuf)
-	copy(sid[:], sidBuf)
-
 	return tid, sid, flagsBuf[0], nil
 }
 
@@ -674,15 +677,7 @@ func setSpanTimestamps(span ptrace.Span, tx *varnishTransaction) {
 	}
 }
 
-func updateSpan(span ptrace.Span, tx *varnishTransaction) error {
-	if tp := tx.traceparent(); tp != "" {
-		sid, tid, _, err := extractTraceparent(tp)
-		if err != nil {
-			return err
-		}
-		span.SetTraceID(sid)
-		span.SetSpanID(tid)
-	}
+func updateSpan(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Resp.Status >= 400 && tx.Resp.Status <= 599 {
 		span.Status().SetCode(ptrace.StatusCodeError)
 	}
@@ -693,5 +688,4 @@ func updateSpan(span ptrace.Span, tx *varnishTransaction) error {
 	setResponseSpanAttrs(span, tx)
 	setSpanName(span, tx)
 	setSpanTimestamps(span, tx)
-	return nil
 }

@@ -181,3 +181,63 @@ func TestTransformVCLCall_LifecyclePhasesNeverSetHandling(t *testing.T) {
 	_, hasHandling := attrs["varnish.handling"]
 	assert.False(t, hasHandling, "lifecycle-only VCL_call phases must not set varnish.handling")
 }
+
+func TestExtractTraceContext_CachesSuccessfulParse(t *testing.T) {
+	const tp = "00-11111111111111111111111111111111-2222222222222222-01"
+	vtx := &varnishTransaction{
+		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
+		capturedHeaderValues: []string{tp},
+	}
+
+	tid1, sid1, flags1, ok1 := extractTraceContext(vtx)
+	require.True(t, ok1)
+
+	vtx.capturedHeaderValues[0] = "not-a-valid-traceparent-at-all"
+
+	tid2, sid2, flags2, ok2 := extractTraceContext(vtx)
+	assert.True(t, ok2, "cache must survive after-the-fact source mutation")
+	assert.Equal(t, tid1, tid2, "TraceID must come from cache, not re-parse")
+	assert.Equal(t, sid1, sid2, "SpanID must come from cache, not re-parse")
+	assert.Equal(t, flags1, flags2, "flags must come from cache, not re-parse")
+}
+
+func TestExtractTraceContext_CachesFailedParse(t *testing.T) {
+	vtx := &varnishTransaction{
+		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
+		capturedHeaderValues: []string{"malformed"},
+	}
+
+	_, _, _, ok1 := extractTraceContext(vtx)
+	require.False(t, ok1)
+
+	vtx.capturedHeaderValues[0] = "00-11111111111111111111111111111111-2222222222222222-01"
+
+	_, _, _, ok2 := extractTraceContext(vtx)
+	assert.False(t, ok2, "failed-parse cache must not be revived by later valid header")
+}
+
+func TestExtractTraceContext_CachesMissingHeader(t *testing.T) {
+	vtx := &varnishTransaction{
+		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
+		capturedHeaderValues: []string{""},
+	}
+
+	_, _, _, ok1 := extractTraceContext(vtx)
+	require.False(t, ok1)
+
+	vtx.capturedHeaderValues[0] = "00-11111111111111111111111111111111-2222222222222222-01"
+
+	_, _, _, ok2 := extractTraceContext(vtx)
+	assert.False(t, ok2, "missing-header cache must not be revived by later populated header")
+}
+
+func BenchmarkExtractTraceparent(b *testing.B) {
+	const tp = "00-11111111111111111111111111111111-2222222222222222-01"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, _, _, err := extractTraceparent(tp); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -202,9 +202,7 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 		span.Attributes().PutStr("varnish.tx.reason", vtx.Reason)
 		span.Status().SetCode(ptrace.StatusCodeOk)
 
-		if err := updateSpan(span, vtx); err != nil {
-			v.set.Logger.Error("failed to update span", zap.String("span", txTraceID.String()), zap.Error(err))
-		}
+		updateSpan(span, vtx)
 		if flags&0x01 == 1 {
 			span.SetFlags(0x01)
 		}
@@ -329,6 +327,10 @@ func resolveSpanID(vtx *varnishTransaction) pcommon.SpanID {
 }
 
 func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.SpanID, byte, bool) {
+	if vtx.tpParsed {
+		return vtx.tpTID, vtx.tpSID, vtx.tpFlags, vtx.tpOK
+	}
+	vtx.tpParsed = true
 	tp := vtx.traceparent()
 	if tp == "" {
 		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
@@ -337,6 +339,10 @@ func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.Span
 	if err != nil {
 		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
 	}
+	vtx.tpTID = tid
+	vtx.tpSID = sid
+	vtx.tpFlags = flags
+	vtx.tpOK = true
 	return tid, sid, flags, true
 }
 
