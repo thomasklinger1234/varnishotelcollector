@@ -94,14 +94,12 @@ type varnishTransaction struct {
 	Errors     []string
 	Links      []varnishTransactionLink
 	Events     []varnishTransactionEvent
-	// Cache carries the numeric fields from the VSL `Hit` record. Populated
-	// only for cache-hit transactions (Handling == "hit" or "streaming-hit").
-	// See transformHit for the payload format.
+	// Cache carries the numeric fields from the VSL `Hit` record.
 	Cache *varnishTransactionCacheHit
 	// SLT_Begin: sess, req, bereq
 	Type  string
 	Level uint64
-	// capturedHeaders is the receiver's shared list of header→attribute
+	// capturedHeaders is the receiver's shared list of header to attribute
 	// mappings (lowercase, sorted, requiredCapturedHeader at slot 0).
 	// capturedHeaderValues is a per-tx fixed-size slice indexed the same
 	// way and populated by transformReqHeader.
@@ -110,7 +108,7 @@ type varnishTransaction struct {
 
 	// traceparent parse cache. Set once by extractTraceContext; both
 	// buildTraces and resolveSpanID (parent lookups) hit this path
-	// repeatedly for the same tx. See docs/ram-usage-analysis.md P1.
+	// repeatedly for the same tx.
 	tpParsed bool
 	tpOK     bool
 	tpTID    pcommon.TraceID
@@ -118,6 +116,7 @@ type varnishTransaction struct {
 	tpFlags  byte
 }
 
+// todo: part of capture header refactor
 // traceparent returns the captured trace-context header value.
 // requiredCapturedHeader is always at slot 0 by construction of
 // buildCapturedHeaders, so the length check is only defensive.
@@ -391,18 +390,28 @@ func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 		return nil
 	}
 	payload := rec.Payload.String()
+	// todo: refactor using bytes. methods to avoid string allocations and only emit a string at the end if necessarry - if possible and feasible - also use splitN
 	colonIdx := strings.Index(payload, ":")
-	if colonIdx <= 0 || colonIdx+1 >= len(payload) {
+	if colonIdx <= 0 {
 		var partial string
 		if len(payload) > 5 {
 			partial = payload[:5]
 		}
 		return fmt.Errorf("invalid tag: %s for payload (redacted): %s", rec.Tag.String(), partial)
 	}
+	// todo: refactor this with trim
+	// Empty values are legal (RFC 9110 §5.5). VSL emits `Name: value`
+	// with a space after the colon, but tolerate `Name:value` and
+	// `Name:` (empty) for robustness against non-standard producers.
+	valueStart := colonIdx + 1
+	if valueStart < len(payload) && payload[valueStart] == ' ' {
+		valueStart++
+	}
 	name := payload[:colonIdx]
+	// todo: refactor the whole capture header thing to be more robust and simple - i dislike the idea of having 3 different types to capture some headers
 	for i, h := range tx.capturedHeaders {
 		if strings.EqualFold(name, h.Name) {
-			tx.capturedHeaderValues[i] = payload[colonIdx+2:]
+			tx.capturedHeaderValues[i] = payload[valueStart:]
 			return nil
 		}
 	}
@@ -437,9 +446,6 @@ func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 
 	scanned, _ := fmt.Sscanf(rec.Payload.String(), "%d %f %f %f %d %d",
 		&xid, &ttl, &grace, &keep, &fetched, &clen)
-	// Sscanf returns io.EOF as err when it reaches end-of-input at scanned<argc,
-	// which is the normal case for the non-streaming Hit payload (4 fields).
-	// Only reject when we did not get the required 4 fields.
 	if scanned < 4 {
 		return fmt.Errorf("failed to parse Hit: scanned=%d payload=%q", scanned, rec.Payload.String())
 	}

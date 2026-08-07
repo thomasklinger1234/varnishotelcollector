@@ -231,6 +231,67 @@ func TestExtractTraceContext_CachesMissingHeader(t *testing.T) {
 	assert.False(t, ok2, "missing-header cache must not be revived by later populated header")
 }
 
+// Regression: the fork's payload() trims trailing NUL, so a Varnish 9
+// payload that used to arrive as `Name:\x00` (empty value + C terminator)
+// now arrives as `Name:` (length 5, colon at end). Older guard rejected
+// this as "invalid tag". Empty header values are legal (RFC 9110 §5.5)
+// and were previously accepted only because the trailing NUL made the
+// length-check pass. Also covers `Name:value` (no space after colon).
+func TestTransformReqHeader_ValueEdgeCases(t *testing.T) {
+	captured := []capturedHeader{
+		{Name: requiredCapturedHeader},
+		{Name: "x-empty", AttrKey: "http.request.header.x_empty"},
+		{Name: "x-nospace", AttrKey: "http.request.header.x_nospace"},
+		{Name: "x-normal", AttrKey: "http.request.header.x_normal"},
+	}
+
+	cases := []struct {
+		name    string
+		slot    int
+		payload string
+		want    string
+	}{
+		{"empty value trimmed of NUL", 1, "x-empty:", ""},
+		{"no space after colon", 2, "x-nospace:value", "value"},
+		{"normal name-colon-space-value", 3, "x-normal: value", "value"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			vtx := &varnishTransaction{
+				capturedHeaders:      captured,
+				capturedHeaderValues: make([]string, len(captured)),
+			}
+			rec := varnishlog.Record{
+				Type:    varnishlog.Client,
+				Tag:     tagByName(t, "ReqHeader"),
+				VXID:    1,
+				Payload: varnishlog.Payload(c.payload),
+			}
+			err := transformReqHeader(vtx, rec)
+			require.NoError(t, err, "empty and no-space values must not error")
+			assert.Equal(t, c.want, vtx.capturedHeaderValues[c.slot])
+		})
+	}
+}
+
+func TestTransformReqHeader_MalformedRejected(t *testing.T) {
+	vtx := &varnishTransaction{
+		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
+		capturedHeaderValues: make([]string, 1),
+	}
+	for _, payload := range []string{"", "no-colon-at-all", ":no-name"} {
+		rec := varnishlog.Record{
+			Type:    varnishlog.Client,
+			Tag:     tagByName(t, "ReqHeader"),
+			VXID:    1,
+			Payload: varnishlog.Payload(payload),
+		}
+		err := transformReqHeader(vtx, rec)
+		assert.Error(t, err, "payload %q must error: no colon or empty name", payload)
+	}
+}
+
 func BenchmarkExtractTraceparent(b *testing.B) {
 	const tp = "00-11111111111111111111111111111111-2222222222222222-01"
 	b.ReportAllocs()
