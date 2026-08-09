@@ -5,6 +5,7 @@ on:
   pull_request_target:
     branches:
       - main
+      - next
 
 concurrency:
   group: ${{ github.head_ref || github.run_id }}-${{ github.workflow }}
