@@ -1,15 +1,35 @@
+---
+name: varnishotelcollector
+
+volumes:
+  varnish-vsm:
+
 services:
   varnish:
-    image: varnish:9.0.3
+    image: varnish:9.0.3-3
     ports:
       - "8080:8080"
     volumes:
-      - ./dev/varnish/etc/varnish:/etc/varnish
-      - ./dev/varnish/var/www/html:/var/www/html
-      - ./data/var/lib/varnish:/var/lib/varnish
+      - ./hack/varnish/etc/varnish:/etc/varnish
+      - ./hack/varnish/var/www/html:/var/www/html
+      - varnish-vsm:/var/lib/varnish/varnishd
     environment:
       VARNISH_HTTP_PORT: "8080"
       VARNISH_SIZE: "1G"
+
+  varnishotelcollector:
+    build:
+      dockerfile: distribution/varnishotelcollector/Dockerfile
+      context: .
+      args:
+        - VARNISH_VERSION=9.0.3-3
+    ports:
+      - "4444:4444" # prometheus
+    volumes:
+      - varnish-vsm:/var/lib/varnish/varnishd
+      - ./distribution/varnishotelcollector/config.yaml:/etc/varnishotelcollector/config.yaml:ro
+    environment:
+      OTEL_GRPC_ENDPOINT: "otel:4317"
 
   otel:
     image: grafana/otel-lgtm:latest
