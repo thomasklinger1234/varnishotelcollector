@@ -1,5 +1,7 @@
-build
-dist
-.omo
+build/
+dist/
 dev/
+
+.omo
+.env
 .idea/
