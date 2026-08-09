@@ -5,30 +5,30 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	varnishlog "gitlab.com/uplex/varnish/varnishapi/pkg/log"
+	varnishlog "github.com/varnish/varnish-go/log"
 )
 
-func vclCallRecord(t *testing.T, vxid uint, phase string) varnishlog.Record {
+func vclCallRecord(t *testing.T, vxid uint64, phase string) varnishlog.Record {
 	t.Helper()
 	return varnishlog.Record{
-		Type:    varnishlog.Client,
-		Tag:     tagByName(t, "VCL_call"),
-		VXID:    vxid,
-		Payload: varnishlog.Payload(phase),
+		Tag:  varnishlog.TagVCLCall,
+		VXID: vxid,
+		Data: phase,
 	}
 }
 
-func hitRecord(t *testing.T, vxid uint, payload string) varnishlog.Record {
+func hitRecord(t *testing.T, vxid uint64, payload string) varnishlog.Record {
 	t.Helper()
 	return varnishlog.Record{
-		Type:    varnishlog.Client,
-		Tag:     tagByName(t, "Hit"),
-		VXID:    vxid,
-		Payload: varnishlog.Payload(payload),
+		Tag:       varnishlog.TagHit,
+		VXID:      vxid,
+		IsClient:  true,
+		IsBackend: false,
+		Data:      payload,
 	}
 }
 
-func spanAttrsForVXID(t *testing.T, rcv *varnishcachelogReceiver, txGrp []varnishlog.Tx, vxid uint32) map[string]any {
+func spanAttrsForVXID(t *testing.T, rcv *varnishcachelogTraceReceiver, txGrp []varnishlog.Transaction, vxid uint64) map[string]any {
 	t.Helper()
 	traces := rcv.buildTraces(txGrp)
 	require.Equal(t, 1, traces.ResourceSpans().Len())
@@ -36,7 +36,7 @@ func spanAttrsForVXID(t *testing.T, rcv *varnishcachelogReceiver, txGrp []varnis
 	for i := 0; i < spans.Len(); i++ {
 		s := spans.At(i)
 		v, ok := s.Attributes().Get("varnish.vxid")
-		if ok && uint32(v.Int()) == vxid {
+		if ok && uint64(v.Int()) == vxid {
 			return s.Attributes().AsRaw()
 		}
 	}
@@ -50,21 +50,22 @@ func spanAttrsForVXID(t *testing.T, rcv *varnishcachelogReceiver, txGrp []varnis
 // branch (`tx.Handling = strings.ToLower(h)`) turned every cache hit into
 // `handling=deliver`.
 func TestTransformVCLCall_DeliverDoesNotStompHit(t *testing.T) {
-	const rxreqVXID uint32 = 9
+	const rxreqVXID uint64 = 9
 
 	rcv := newTestReceiver(t)
-	txGrp := []varnishlog.Tx{{
-		Type:   varnishlog.Req,
-		Reason: varnishlog.RxReq,
-		VXID:   rxreqVXID,
+	txGrp := []varnishlog.Transaction{{
+		VXID:       int64(rxreqVXID),
+		ParentVXID: 0,
+		Type:       varnishlog.TypeRequest,
+		Reason:     varnishlog.ReasonRxReq,
 		Records: []varnishlog.Record{
-			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-09090909090909090909090909090909-0909090909090909-01"),
-			vclCallRecord(t, uint(rxreqVXID), "RECV"),
-			vclCallRecord(t, uint(rxreqVXID), "HASH"),
-			hitRecord(t, uint(rxreqVXID), "32773 9.196981 1.000000 0.000000"),
-			vclCallRecord(t, uint(rxreqVXID), "HIT"),
-			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", "00-09090909090909090909090909090909-0909090909090909-01"),
+			vclCallRecord(t, (rxreqVXID), "RECV"),
+			vclCallRecord(t, rxreqVXID, "HASH"),
+			hitRecord(t, rxreqVXID, "32773 9.196981 1.000000 0.000000"),
+			vclCallRecord(t, rxreqVXID, "HIT"),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
 		},
 	}}
 
@@ -79,19 +80,20 @@ func TestTransformVCLCall_DeliverDoesNotStompHit(t *testing.T) {
 }
 
 func TestTransformHit_GraceHitFlaggedWhenTTLNonPositive(t *testing.T) {
-	const rxreqVXID uint32 = 10
+	const rxreqVXID uint64 = 10
 
 	rcv := newTestReceiver(t)
-	txGrp := []varnishlog.Tx{{
-		Type:   varnishlog.Req,
-		Reason: varnishlog.RxReq,
-		VXID:   rxreqVXID,
+	txGrp := []varnishlog.Transaction{{
+		VXID:       int64(rxreqVXID),
+		ParentVXID: 0,
+		Type:       varnishlog.TypeRequest,
+		Reason:     varnishlog.ReasonRxReq,
 		Records: []varnishlog.Record{
-			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a-0a0a0a0a0a0a0a0a-01"),
-			hitRecord(t, uint(rxreqVXID), "32773 -0.500000 1.000000 0.000000"),
-			vclCallRecord(t, uint(rxreqVXID), "HIT"),
-			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", "00-0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a-0a0a0a0a0a0a0a0a-01"),
+			hitRecord(t, rxreqVXID, "32773 -0.500000 1.000000 0.000000"),
+			vclCallRecord(t, rxreqVXID, "HIT"),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
 		},
 	}}
 
@@ -105,19 +107,20 @@ func TestTransformHit_GraceHitFlaggedWhenTTLNonPositive(t *testing.T) {
 }
 
 func TestTransformHit_StreamingHitSetsHandlingAndHitFlag(t *testing.T) {
-	const rxreqVXID uint32 = 11
+	const rxreqVXID uint64 = 11
 
 	rcv := newTestReceiver(t)
-	txGrp := []varnishlog.Tx{{
-		Type:   varnishlog.Req,
-		Reason: varnishlog.RxReq,
-		VXID:   rxreqVXID,
+	txGrp := []varnishlog.Transaction{{
+		VXID:       int64(rxreqVXID),
+		ParentVXID: 0,
+		Type:       varnishlog.TypeRequest,
+		Reason:     varnishlog.ReasonRxReq,
 		Records: []varnishlog.Record{
-			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b-0b0b0b0b0b0b0b0b-01"),
-			hitRecord(t, uint(rxreqVXID), "32773 5.000000 1.000000 0.000000 12345 67890"),
-			vclCallRecord(t, uint(rxreqVXID), "HIT"),
-			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", "00-0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b-0b0b0b0b0b0b0b0b-01"),
+			hitRecord(t, rxreqVXID, "32773 5.000000 1.000000 0.000000 12345 67890"),
+			vclCallRecord(t, rxreqVXID, "HIT"),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
 		},
 	}}
 
@@ -129,20 +132,21 @@ func TestTransformHit_StreamingHitSetsHandlingAndHitFlag(t *testing.T) {
 }
 
 func TestTransformVCLCall_MissDoesNotSetCacheHit(t *testing.T) {
-	const rxreqVXID uint32 = 12
+	const rxreqVXID uint64 = 12
 
 	rcv := newTestReceiver(t)
-	txGrp := []varnishlog.Tx{{
-		Type:   varnishlog.Req,
-		Reason: varnishlog.RxReq,
-		VXID:   rxreqVXID,
+	txGrp := []varnishlog.Transaction{{
+		VXID:       int64(rxreqVXID),
+		ParentVXID: 0,
+		Type:       varnishlog.TypeRequest,
+		Reason:     varnishlog.ReasonRxReq,
 		Records: []varnishlog.Record{
-			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c-0c0c0c0c0c0c0c0c-01"),
-			vclCallRecord(t, uint(rxreqVXID), "RECV"),
-			vclCallRecord(t, uint(rxreqVXID), "HASH"),
-			vclCallRecord(t, uint(rxreqVXID), "MISS"),
-			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", "00-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c-0c0c0c0c0c0c0c0c-01"),
+			vclCallRecord(t, rxreqVXID, "RECV"),
+			vclCallRecord(t, rxreqVXID, "HASH"),
+			vclCallRecord(t, rxreqVXID, "MISS"),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
 		},
 	}}
 
@@ -160,19 +164,20 @@ func TestTransformVCLCall_MissDoesNotSetCacheHit(t *testing.T) {
 // DELIVER and BACKEND_FETCH are lifecycle phases, not cache decisions, and
 // must leave Handling empty when they are the only VCL_call records.
 func TestTransformVCLCall_LifecyclePhasesNeverSetHandling(t *testing.T) {
-	const rxreqVXID uint32 = 13
+	const rxreqVXID uint64 = 13
 
 	rcv := newTestReceiver(t)
-	txGrp := []varnishlog.Tx{{
-		Type:   varnishlog.Req,
-		Reason: varnishlog.RxReq,
-		VXID:   rxreqVXID,
+	txGrp := []varnishlog.Transaction{{
+		VXID:       int64(rxreqVXID),
+		ParentVXID: 0,
+		Type:       varnishlog.TypeRequest,
+		Reason:     varnishlog.ReasonRxReq,
 		Records: []varnishlog.Record{
-			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "00-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d-0d0d0d0d0d0d0d0d-01"),
-			vclCallRecord(t, uint(rxreqVXID), "RECV"),
-			vclCallRecord(t, uint(rxreqVXID), "HASH"),
-			vclCallRecord(t, uint(rxreqVXID), "DELIVER"),
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", "00-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d-0d0d0d0d0d0d0d0d-01"),
+			vclCallRecord(t, rxreqVXID, "RECV"),
+			vclCallRecord(t, rxreqVXID, "HASH"),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
 		},
 	}}
 
@@ -263,10 +268,11 @@ func TestTransformReqHeader_ValueEdgeCases(t *testing.T) {
 				capturedHeaderValues: make([]string, len(captured)),
 			}
 			rec := varnishlog.Record{
-				Type:    varnishlog.Client,
-				Tag:     tagByName(t, "ReqHeader"),
-				VXID:    1,
-				Payload: varnishlog.Payload(c.payload),
+				Tag:       varnishlog.TagReqHeader,
+				VXID:      1,
+				IsClient:  true,
+				IsBackend: false,
+				Data:      c.payload,
 			}
 			err := transformReqHeader(vtx, rec)
 			require.NoError(t, err, "empty and no-space values must not error")
@@ -282,10 +288,11 @@ func TestTransformReqHeader_MalformedRejected(t *testing.T) {
 	}
 	for _, payload := range []string{"", "no-colon-at-all", ":no-name"} {
 		rec := varnishlog.Record{
-			Type:    varnishlog.Client,
-			Tag:     tagByName(t, "ReqHeader"),
-			VXID:    1,
-			Payload: varnishlog.Payload(payload),
+			Tag:       varnishlog.TagReqHeader,
+			VXID:      1,
+			IsClient:  true,
+			IsBackend: false,
+			Data:      payload,
 		}
 		err := transformReqHeader(vtx, rec)
 		assert.Error(t, err, "payload %q must error: no colon or empty name", payload)

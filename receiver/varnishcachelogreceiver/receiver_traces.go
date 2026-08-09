@@ -3,78 +3,67 @@ package varnishcachelogreceiver
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/metadata"
-	varnishlog "gitlab.com/uplex/varnish/varnishapi/pkg/log"
+	varnishlog "github.com/varnish/varnish-go/log"
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componentstatus"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-// vslIdleSleep bounds the sleep between polls when the live VSL buffer
-// is momentarily empty (NextTxGroup returned EOL). Without this sleep
-// the CPU usage will stay at 100%, because the loop will query the VSL
-// as often as possible.
-const vslIdleSleep = 10 * time.Millisecond
+var _ receiver.Traces = &varnishcachelogTraceReceiver{}
 
-// VSM Retry with exponential backoff on attach failures.
-const (
-	vslAttachMaxAttempts    = 10
-	vslAttachInitialBackoff = 100 * time.Millisecond
-)
-
-// vslFatalStatus maps terminal VSL statuses to their log messages.
-var vslFatalStatus = map[varnishlog.Status]string{
-	varnishlog.EOF:       "VSL EOF",
-	varnishlog.Abandoned: "VSL abandoned",
-	varnishlog.IOErr:     "VSL IOErr",
-	varnishlog.WriteErr:  "VSL WriteErr",
-	varnishlog.Overrun:   "VSL overrun",
-}
-
-var _ receiver.Traces = &varnishcachelogReceiver{}
-
-type varnishcachelogReceiver struct {
+type varnishcachelogTraceReceiver struct {
 	set             receiver.Settings
 	cfg             *Config
 	nextConsumer    consumer.Traces
 	capturedHeaders []capturedHeader
 	wg              sync.WaitGroup
+	cancel          context.CancelFunc
 }
 
-func (v *varnishcachelogReceiver) Start(ctx context.Context, host component.Host) error {
-	vsm := varnishlog.New()
-	if err := vsm.Timeout(v.cfg.Timeout); err != nil {
-		return fmt.Errorf("failed to set vsm timeout: %w", err)
-	}
-
-	if err := attachVSMWithRetry(ctx, v.set.Logger, vsm, v.cfg.WorkingDirectory); err != nil {
-		return fmt.Errorf("failed to attach to vsm after %d attempts: %w", vslAttachMaxAttempts, err)
-	}
-
-	vsmCursor, err := vsm.NewCursor()
+func (v *varnishcachelogTraceReceiver) Start(ctx context.Context, host component.Host) error {
+	vsmReader, err := varnishlog.New().
+		SetGrouping(varnishlog.GroupingRequest).
+		SetName(v.cfg.WorkingDirectory).
+		SetQuery(v.cfg.VSLQuery).
+		SetTimeout(v.cfg.Timeout).
+		SetBacklog(false).
+		SetErrHandler(func(err varnishlog.LogErr) {
+			switch err {
+			case varnishlog.ErrCursorLost:
+			case varnishlog.ErrIO:
+				v.set.Logger.Warn("encountered recoverable VSL error", zap.String("error", err.String()))
+			default:
+				v.set.Logger.Debug("encountered recoverable VSL error", zap.String("error", err.String()))
+			}
+		}).
+		Attach()
 	if err != nil {
-		return fmt.Errorf("failed to create vsm cursor: %w", err)
+		return fmt.Errorf("failed to attach to VSM: %s", err.Error())
 	}
 
-	vsmQuery, err := vsmCursor.NewQuery(varnishlog.Request, v.cfg.VSLQuery)
-	if err != nil {
-		return fmt.Errorf("failed to create vsm query: %w", err)
-	}
-	v.set.Logger.Info("varnishcachelog receiver successfully attached to VSM", zap.String("working_directory", v.cfg.WorkingDirectory), zap.String("vsl_query", v.cfg.VSLQuery))
+	v.set.Logger.Info("successfully attached to VSM",
+		zap.String("working_directory", v.cfg.WorkingDirectory),
+		zap.String("vsl_query", v.cfg.VSLQuery))
+
+	ctx, cancel := context.WithCancel(ctx) // varnish-go/log requires a cancelable context
+	v.cancel = cancel
 
 	v.wg.Go(func() {
 		defer func() {
-			vsmCursor.Delete()
-			vsm.Release()
+			v.set.Logger.Info("closing VSM reader")
+			vsmReader.Close()
 		}()
 		defer func() {
 			if r := recover(); r != nil {
@@ -85,71 +74,38 @@ func (v *varnishcachelogReceiver) Start(ctx context.Context, host component.Host
 				)
 			}
 		}()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				txGrp, txStatus := vsmQuery.NextTxGroup()
-				if txStatus == varnishlog.EOL {
-					select {
-					case <-ctx.Done():
-						return
-					case <-time.After(vslIdleSleep):
-					}
-					continue
-				}
-				if msg, fatal := vslFatalStatus[txStatus]; fatal {
-					v.set.Logger.Error(msg, zap.String("error", vsm.Error()))
-					return
-				}
-				traces := v.buildTraces(txGrp)
-				if err := v.nextConsumer.ConsumeTraces(ctx, traces); err != nil {
-					v.set.Logger.Error("failed to consume traces", zap.Error(err))
-				}
+
+		if err := vsmReader.Run(ctx, func(txGrp []varnishlog.Transaction) error {
+			traces := v.buildTraces(txGrp)
+			if err := v.nextConsumer.ConsumeTraces(ctx, traces); err != nil {
+				v.set.Logger.Error("failed to consume traces", zap.Error(err))
+				return err
+			}
+			return nil
+		}); err != nil {
+			if errors.Is(err, context.Canceled) {
+				v.set.Logger.Info("context was canceled", zap.Error(err))
+			} else {
+				componentstatus.ReportStatus(host, componentstatus.NewRecoverableErrorEvent(fmt.Errorf("failed to run vsm reader: %w", err)))
 			}
 		}
 	})
+
 	return nil
 }
 
-func (v *varnishcachelogReceiver) Shutdown(_ context.Context) error {
+func (v *varnishcachelogTraceReceiver) Shutdown(_ context.Context) error {
+	if v.cancel != nil {
+		v.cancel()
+	}
 	v.wg.Wait()
 	return nil
 }
 
-func attachVSMWithRetry(ctx context.Context, logger *zap.Logger, vsm *varnishlog.Log, workingDirectory string) error {
-	backoff := vslAttachInitialBackoff
-	var lastErr error
-	for attempt := 1; attempt <= vslAttachMaxAttempts; attempt++ {
-		lastErr = vsm.Attach(workingDirectory)
-		if lastErr == nil {
-			if attempt > 1 {
-				logger.Info("vsm attach succeeded after retry", zap.Int("attempt", attempt))
-			}
-			return nil
-		}
-		if attempt == vslAttachMaxAttempts {
-			break
-		}
-		logger.Warn("vsm attach failed, retrying",
-			zap.Int("attempt", attempt),
-			zap.Int("max_attempts", vslAttachMaxAttempts),
-			zap.Duration("backoff", backoff),
-			zap.Error(lastErr),
-		)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(backoff):
-		}
-		backoff *= 2
+func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transaction) ptrace.Traces {
+	if v.set.Logger.Level() == zapcore.DebugLevel {
+		v.logTxGroupDebug(txGrp)
 	}
-	return lastErr
-}
-
-func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Traces {
-	v.logTxGroupDebug(txGrp)
 	vtxs, idxByVXID := v.buildVtxs(txGrp)
 	traceRootVXID := computeTraceRoots(txGrp, vtxs, idxByVXID)
 	traceIDByRoot := assignTraceIDs(txGrp, vtxs, traceRootVXID)
@@ -169,16 +125,16 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 		txTraceID := traceIDByRoot[traceRootVXID[i]]
 		_, spanID, flags, tpOK := extractTraceContext(vtx)
 		if !tpOK {
-			v.set.Logger.Error("dropping tx: no traceparent header (synthetic IDs not supported)",
-				zap.Int64("vxid", int64(tx.VXID)),
-				zap.Uint32("root_vxid", traceRootVXID[i]),
+			v.set.Logger.Debug("dropping tx: no traceparent header (synthetic IDs not supported)",
+				zap.Int64("vxid", tx.VXID),
+				zap.Int64("root_vxid", traceRootVXID[i]),
 			)
 			continue
 		}
 		if txTraceID.IsEmpty() {
-			v.set.Logger.Error("dropping tx: root has no traceparent (synthetic IDs not supported)",
-				zap.Int64("vxid", int64(tx.VXID)),
-				zap.Uint32("root_vxid", traceRootVXID[i]),
+			v.set.Logger.Debug("dropping tx: root has no traceparent (synthetic IDs not supported)",
+				zap.Int64("vxid", tx.VXID),
+				zap.Int64("root_vxid", traceRootVXID[i]),
 			)
 			continue
 		}
@@ -192,17 +148,17 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 		if !isRoot {
 			parentIdx, ok := idxByVXID[tx.ParentVXID]
 			if !ok {
-				v.set.Logger.Error("dropping tx: parent tx not found in txGrp",
-					zap.Int64("vxid", int64(tx.VXID)),
-					zap.Uint32("parent_vxid", tx.ParentVXID),
+				v.set.Logger.Warn("dropping tx: parent tx not found in txGrp",
+					zap.Int64("vxid", tx.VXID),
+					zap.Int64("parent_vxid", tx.ParentVXID),
 				)
 				continue
 			}
 			_, pSpanID, _, pOK := extractTraceContext(vtxs[parentIdx])
 			if !pOK {
-				v.set.Logger.Error("dropping tx: parent tx has no traceparent (parent_span_id unresolvable)",
-					zap.Int64("vxid", int64(tx.VXID)),
-					zap.Uint32("parent_vxid", tx.ParentVXID),
+				v.set.Logger.Warn("dropping tx: parent tx has no traceparent (parent_span_id unresolvable)",
+					zap.Int64("vxid", tx.VXID),
+					zap.Int64("parent_vxid", tx.ParentVXID),
 				)
 				continue
 			}
@@ -211,10 +167,10 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 
 		span := scopeSpans.Spans().AppendEmpty()
 		if tx.VXID > 0 {
-			span.Attributes().PutInt("varnish.vxid", int64(vtx.VXID))
+			span.Attributes().PutInt("varnish.vxid", vtx.VXID)
 		}
 		if !isRoot {
-			span.Attributes().PutInt("varnish.vxid_parent", int64(vtx.VXIDParent))
+			span.Attributes().PutInt("varnish.vxid_parent", vtx.VXIDParent)
 		}
 		span.Attributes().PutStr("varnish.tx.type", vtx.Type)
 		span.Attributes().PutStr("varnish.tx.reason", vtx.Reason)
@@ -237,7 +193,7 @@ func (v *varnishcachelogReceiver) buildTraces(txGrp []varnishlog.Tx) ptrace.Trac
 	return traces
 }
 
-func (v *varnishcachelogReceiver) logTxGroupDebug(txGrp []varnishlog.Tx) {
+func (v *varnishcachelogTraceReceiver) logTxGroupDebug(txGrp []varnishlog.Transaction) {
 	ce := v.set.Logger.Check(zap.DebugLevel, "buildTraces")
 	if ce == nil {
 		return
@@ -249,14 +205,14 @@ func (v *varnishcachelogReceiver) logTxGroupDebug(txGrp []varnishlog.Tx) {
 	beginPayloads := make([]string, len(txGrp))
 	beginPayloadHex := make([]string, len(txGrp))
 	for i, tx := range txGrp {
-		vxids[i] = int64(tx.VXID)
-		parents[i] = int64(tx.ParentVXID)
+		vxids[i] = tx.VXID
+		parents[i] = tx.ParentVXID
 		types[i] = tx.Type.String()
 		reasons[i] = tx.Reason.String()
 		for _, r := range tx.Records {
 			if r.Tag.String() == "Begin" {
-				beginPayloads[i] = strconv.Quote(string(r.Payload))
-				beginPayloadHex[i] = hex.EncodeToString(r.Payload)
+				beginPayloads[i] = strconv.Quote(r.Data)
+				beginPayloadHex[i] = hex.EncodeToString([]byte(r.Data))
 				break
 			}
 		}
@@ -272,9 +228,9 @@ func (v *varnishcachelogReceiver) logTxGroupDebug(txGrp []varnishlog.Tx) {
 	)
 }
 
-func (v *varnishcachelogReceiver) buildVtxs(txGrp []varnishlog.Tx) ([]*varnishTransaction, map[uint32]int) {
+func (v *varnishcachelogTraceReceiver) buildVtxs(txGrp []varnishlog.Transaction) ([]*varnishTransaction, map[int64]int) {
 	vtxs := make([]*varnishTransaction, len(txGrp))
-	idxByVXID := make(map[uint32]int, len(txGrp))
+	idxByVXID := make(map[int64]int, len(txGrp))
 	for i, tx := range txGrp {
 		vtxs[i] = v.buildVtx(tx)
 		idxByVXID[tx.VXID] = i
@@ -284,8 +240,8 @@ func (v *varnishcachelogReceiver) buildVtxs(txGrp []varnishlog.Tx) ([]*varnishTr
 
 // computeTraceRoots walks each tx up its ParentVXID chain until we hit a client rxreq — that
 // rxreq is the trace root.
-func computeTraceRoots(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, idxByVXID map[uint32]int) []uint32 {
-	traceRootVXID := make([]uint32, len(txGrp))
+func computeTraceRoots(txGrp []varnishlog.Transaction, vtxs []*varnishTransaction, idxByVXID map[int64]int) []int64 {
+	traceRootVXID := make([]int64, len(txGrp))
 	for i := range txGrp {
 		j := i
 		for hop := 0; hop <= len(txGrp); hop++ {
@@ -307,8 +263,8 @@ func computeTraceRoots(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, idxByV
 	return traceRootVXID
 }
 
-func assignTraceIDs(txGrp []varnishlog.Tx, vtxs []*varnishTransaction, traceRootVXID []uint32) map[uint32]pcommon.TraceID {
-	traceIDByRoot := make(map[uint32]pcommon.TraceID, len(txGrp))
+func assignTraceIDs(txGrp []varnishlog.Transaction, vtxs []*varnishTransaction, traceRootVXID []int64) map[int64]pcommon.TraceID {
+	traceIDByRoot := make(map[int64]pcommon.TraceID, len(txGrp))
 	for i, tx := range txGrp {
 		root := traceRootVXID[i]
 		if root == 0 || tx.VXID != root {
@@ -341,9 +297,9 @@ func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.Span
 	return tid, sid, flags, true
 }
 
-func (v *varnishcachelogReceiver) buildVtx(tx varnishlog.Tx) *varnishTransaction {
+func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varnishTransaction {
 	vtx := &varnishTransaction{
-		VXID:                 uint64(tx.VXID),
+		VXID:                 tx.VXID,
 		Events:               make([]varnishTransactionEvent, 0),
 		Errors:               make([]string, 0),
 		Logs:                 make([]string, 0),
@@ -354,11 +310,12 @@ func (v *varnishcachelogReceiver) buildVtx(tx varnishlog.Tx) *varnishTransaction
 		capturedHeaderValues: make([]string, len(v.capturedHeaders)),
 	}
 	for _, txRec := range tx.Records {
-		switch txRec.Type {
-		case varnishlog.Client:
+		if txRec.IsClient {
 			vtx.Side = "client"
-		case varnishlog.Backend:
+		} else if txRec.IsBackend {
 			vtx.Side = "backend"
+		} else {
+			vtx.Side = "unknown"
 		}
 		if trans, ok := transformFuncs[txRec.Tag.String()]; ok {
 			if err := trans(vtx, txRec); err != nil {
@@ -370,7 +327,7 @@ func (v *varnishcachelogReceiver) buildVtx(tx varnishlog.Tx) *varnishTransaction
 }
 
 func newVarnishcacheLogReceiver(set receiver.Settings, config *Config, nextConsumer consumer.Traces) receiver.Traces {
-	return &varnishcachelogReceiver{
+	return &varnishcachelogTraceReceiver{
 		set:             set,
 		cfg:             config,
 		nextConsumer:    nextConsumer,

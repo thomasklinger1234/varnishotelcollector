@@ -4,6 +4,5 @@ use (
 	.
 	./internal/tools
 	./receiver/varnishcachelogreceiver
-	./receiver/varnishcachelogreceiver/pkg/gitlab.com/uplex/varnish/varnishapi
 	./receiver/varnishcachestatreceiver
 )

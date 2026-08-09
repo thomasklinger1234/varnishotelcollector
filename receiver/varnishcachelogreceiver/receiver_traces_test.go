@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/metadata"
-	varnishlog "gitlab.com/uplex/varnish/varnishapi/pkg/log"
+	varnishlog "github.com/varnish/varnish-go/log"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/receiver/receivertest"
@@ -16,42 +16,44 @@ import (
 
 func tagByName(t *testing.T, name string) varnishlog.Tag {
 	t.Helper()
-	for i, td := range varnishlog.Tags {
-		if td.String == name {
-			return varnishlog.Tag(i)
-		}
-	}
-	t.Fatalf("unknown VSL tag %q", name)
-	return 0
-}
-
-func beginRecord(t *testing.T, vxid uint, txType, parentVXID, reason string) varnishlog.Record {
-	t.Helper()
-	return varnishlog.Record{
-		Type:    varnishlog.Client,
-		Tag:     tagByName(t, "Begin"),
-		VXID:    vxid,
-		Payload: varnishlog.Payload(fmt.Sprintf("%s %s %s", txType, parentVXID, reason)),
+	if tag, err := varnishlog.TagByName(name); err != nil {
+		t.Fatalf("unknown VSL tag %q", name)
+		return 0
+	} else {
+		return tag
 	}
 }
 
-func reqHeaderRecord(t *testing.T, vxid uint, name, value string) varnishlog.Record {
+func beginRecord(t *testing.T, vxid uint64, txType, parentVXID, reason string) varnishlog.Record {
 	t.Helper()
 	return varnishlog.Record{
-		Type:    varnishlog.Client,
-		Tag:     tagByName(t, "ReqHeader"),
-		VXID:    vxid,
-		Payload: varnishlog.Payload(fmt.Sprintf("%s: %s", name, value)),
+		Tag:       varnishlog.TagBegin,
+		VXID:      vxid,
+		IsClient:  false,
+		IsBackend: false,
+		Data:      fmt.Sprintf("%s %s %s", txType, parentVXID, reason),
 	}
 }
 
-func bereqHeaderRecord(t *testing.T, vxid uint, name, value string) varnishlog.Record {
+func reqHeaderRecord(t *testing.T, vxid uint64, name, value string) varnishlog.Record {
 	t.Helper()
 	return varnishlog.Record{
-		Type:    varnishlog.Backend,
-		Tag:     tagByName(t, "BereqHeader"),
-		VXID:    vxid,
-		Payload: varnishlog.Payload(fmt.Sprintf("%s: %s", name, value)),
+		Tag:       varnishlog.TagReqHeader,
+		VXID:      vxid,
+		IsClient:  false,
+		IsBackend: false,
+		Data:      fmt.Sprintf("%s: %s", name, value),
+	}
+}
+
+func bereqHeaderRecord(t *testing.T, vxid uint64, name, value string) varnishlog.Record {
+	t.Helper()
+	return varnishlog.Record{
+		Tag:       varnishlog.TagBereqHeader,
+		VXID:      vxid,
+		IsClient:  false,
+		IsBackend: false,
+		Data:      fmt.Sprintf("%s: %s", name, value),
 	}
 }
 
@@ -75,21 +77,21 @@ func hexSpanID(t *testing.T, hexStr string) pcommon.SpanID {
 	return pcommon.SpanID(id)
 }
 
-func newTestReceiver(t *testing.T) *varnishcachelogReceiver {
+func newTestReceiver(t *testing.T) *varnishcachelogTraceReceiver {
 	t.Helper()
 	cfg := createDefaultConfig().(*Config)
-	return &varnishcachelogReceiver{
+	return &varnishcachelogTraceReceiver{
 		set:             receivertest.NewNopSettings(metadata.Type),
 		cfg:             cfg,
 		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
 	}
 }
 
-func newTestReceiverWithHeaders(t *testing.T, captured map[string]string) *varnishcachelogReceiver {
+func newTestReceiverWithHeaders(t *testing.T, captured map[string]string) *varnishcachelogTraceReceiver {
 	t.Helper()
 	cfg := createDefaultConfig().(*Config)
 	cfg.CaptureRequestHeaders = captured
-	return &varnishcachelogReceiver{
+	return &varnishcachelogTraceReceiver{
 		set:             receivertest.NewNopSettings(metadata.Type),
 		cfg:             cfg,
 		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
@@ -103,8 +105,8 @@ func newTestReceiverWithHeaders(t *testing.T, captured map[string]string) *varni
 // the trace root. See buildTraces() for the invariant this guards.
 func TestBuildTraces_CacheHitRxreqNoChildren(t *testing.T) {
 	const (
-		sessionVXID uint32 = 1
-		rxreqVXID   uint32 = 42
+		sessionVXID uint64 = 1
+		rxreqVXID   uint64 = 42
 
 		traceIDHex     = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
 		rxreqSpanIDHex = "b1b1b1b1b1b1b1b1"
@@ -113,19 +115,17 @@ func TestBuildTraces_CacheHitRxreqNoChildren(t *testing.T) {
 
 	rcv := newTestReceiver(t)
 
-	txGrp := []varnishlog.Tx{
-		{
-			Type:       varnishlog.Req,
-			Reason:     varnishlog.RxReq,
-			Level:      1,
-			VXID:       rxreqVXID,
-			ParentVXID: sessionVXID,
-			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "1", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
-			},
+	txGrp := []varnishlog.Transaction{{
+		Level:      1,
+		VXID:       int64(rxreqVXID),
+		ParentVXID: int64(sessionVXID),
+		Type:       varnishlog.TypeRequest,
+		Reason:     varnishlog.ReasonRxReq,
+		Records: []varnishlog.Record{
+			beginRecord(t, rxreqVXID, "req", "1", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
 		},
-	}
+	}}
 
 	traces := rcv.buildTraces(txGrp)
 
@@ -151,22 +151,22 @@ func TestBuildTraces_CacheHitRxreqNoChildren(t *testing.T) {
 // TCP session must end up in two distinct traces, not merged into one
 // via a shared all-zero trace ID.
 func TestBuildTraces_TwoCacheHitRxreqsSameSession(t *testing.T) {
-	const sessionVXID uint32 = 1
+	const sessionVXID uint64 = 1
 
 	rcv := newTestReceiver(t)
 
-	buildOne := func(rxreqVXID uint32, traceIDHex, spanIDHex string) pcommon.TraceID {
+	buildOne := func(rxreqVXID uint64, traceIDHex, spanIDHex string) pcommon.TraceID {
 		tp := fmt.Sprintf("00-%s-%s-01", traceIDHex, spanIDHex)
-		txGrp := []varnishlog.Tx{
+		txGrp := []varnishlog.Transaction{
 			{
-				Type:       varnishlog.Req,
-				Reason:     varnishlog.RxReq,
+				Type:       varnishlog.TypeRequest,
+				Reason:     varnishlog.ReasonRxReq,
 				Level:      1,
-				VXID:       rxreqVXID,
-				ParentVXID: sessionVXID,
+				VXID:       int64(rxreqVXID),
+				ParentVXID: int64(sessionVXID),
 				Records: []varnishlog.Record{
-					beginRecord(t, uint(rxreqVXID), "req", "1", "rxreq"),
-					reqHeaderRecord(t, uint(rxreqVXID), "traceparent", tp),
+					beginRecord(t, rxreqVXID, "req", "1", "rxreq"),
+					reqHeaderRecord(t, rxreqVXID, "traceparent", tp),
 				},
 			},
 		}
@@ -189,8 +189,8 @@ func TestBuildTraces_TwoCacheHitRxreqsSameSession(t *testing.T) {
 // the root as their parent span.
 func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 	const (
-		rxreqVXID uint32 = 2
-		bereqVXID uint32 = 3
+		rxreqVXID uint64 = 2
+		bereqVXID uint64 = 3
 
 		traceIDHex     = "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3"
 		rxreqSpanIDHex = "b3b3b3b3b3b3b3b3"
@@ -201,27 +201,27 @@ func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 
 	rcv := newTestReceiver(t)
 
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type:       varnishlog.Req,
-			Reason:     varnishlog.RxReq,
+			Type:       varnishlog.TypeRequest,
+			Reason:     varnishlog.ReasonRxReq,
 			Level:      1,
-			VXID:       rxreqVXID,
+			VXID:       int64(rxreqVXID),
 			ParentVXID: 0,
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "1", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+				beginRecord(t, rxreqVXID, "req", "1", "rxreq"),
+				reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
 			},
 		},
 		{
-			Type:       varnishlog.BeReq,
-			Reason:     varnishlog.Fetch,
+			Type:       varnishlog.TypeBackend,
+			Reason:     varnishlog.ReasonFetch,
 			Level:      2,
-			VXID:       bereqVXID,
-			ParentVXID: rxreqVXID,
+			VXID:       int64(bereqVXID),
+			ParentVXID: int64(rxreqVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
+				beginRecord(t, bereqVXID, "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
+				bereqHeaderRecord(t, bereqVXID, "traceparent", bereqTP),
 			},
 		},
 	}
@@ -262,11 +262,11 @@ func TestBuildTraces_RxreqWithBereqChild(t *testing.T) {
 //   - NOT merge two rxreqs on the same TCP session into one trace
 func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
 	const (
-		sessVXID   uint32 = 100
-		rxreqAVXID uint32 = 101
-		rxreqBVXID uint32 = 103
-		bereqAVXID uint32 = 102
-		bereqBVXID uint32 = 104
+		sessVXID   uint64 = 100
+		rxreqAVXID uint64 = 101
+		rxreqBVXID uint64 = 103
+		bereqAVXID uint64 = 102
+		bereqBVXID uint64 = 104
 
 		traceIDA     = "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4"
 		traceIDB     = "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4"
@@ -282,42 +282,42 @@ func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
 
 	rcv := newTestReceiver(t)
 
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 1, VXID: sessVXID, ParentVXID: 0,
-			Records: []varnishlog.Record{beginRecord(t, uint(sessVXID), "sess", "0", "HTTP/1")},
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 1, VXID: int64(sessVXID), ParentVXID: 0,
+			Records: []varnishlog.Record{beginRecord(t, sessVXID, "sess", "0", "HTTP/1")},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: rxreqAVXID, ParentVXID: sessVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: int64(rxreqAVXID), ParentVXID: int64(sessVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqAVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
-				reqHeaderRecord(t, uint(rxreqAVXID), "traceparent", tpA),
+				beginRecord(t, rxreqAVXID, "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, rxreqAVXID, "traceparent", tpA),
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: rxreqBVXID, ParentVXID: sessVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: int64(rxreqBVXID), ParentVXID: int64(sessVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqBVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
-				reqHeaderRecord(t, uint(rxreqBVXID), "traceparent", tpB),
+				beginRecord(t, rxreqBVXID, "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, rxreqBVXID, "traceparent", tpB),
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: bereqAVXID, ParentVXID: rxreqAVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: int64(bereqAVXID), ParentVXID: int64(rxreqAVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqAVXID), "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqAVXID), "traceparent", tpAbereq),
+				beginRecord(t, bereqAVXID, "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch"),
+				bereqHeaderRecord(t, bereqAVXID, "traceparent", tpAbereq),
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: bereqBVXID, ParentVXID: rxreqBVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: int64(bereqBVXID), ParentVXID: int64(rxreqBVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqBVXID), "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqBVXID), "traceparent", tpBbereq),
+				beginRecord(t, bereqBVXID, "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch"),
+				bereqHeaderRecord(t, bereqBVXID, "traceparent", tpBbereq),
 			},
 		},
 	}
@@ -327,11 +327,11 @@ func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
 	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
 	require.Equal(t, 4, spans.Len(), "session must be dropped; 2 rxreqs + 2 bereqs = 4 spans")
 
-	find := func(vxid uint32) (ptrace.Span, bool) {
+	find := func(vxid uint64) (ptrace.Span, bool) {
 		for i := 0; i < spans.Len(); i++ {
 			s := spans.At(i)
 			v, has := s.Attributes().Get("varnish.vxid")
-			if has && uint32(v.Int()) == vxid {
+			if has && uint64(v.Int()) == vxid {
 				return s, true
 			}
 		}
@@ -379,11 +379,11 @@ func TestBuildTraces_SessionRootedGroup_Varnish9(t *testing.T) {
 // share one trace_id.
 func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 	const (
-		sessVXID  uint32 = 100
-		rxreqVXID uint32 = 101
-		bereqVXID uint32 = 102
-		esiVXID   uint32 = 103
-		esiBqVXID uint32 = 104
+		sessVXID  uint64 = 100
+		rxreqVXID uint64 = 101
+		bereqVXID uint64 = 102
+		esiVXID   uint64 = 103
+		esiBqVXID uint64 = 104
 
 		traceIDHex     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		rxreqSpanIDHex = "1111111111111111"
@@ -400,42 +400,42 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 
 	rcv := newTestReceiver(t)
 
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 1, VXID: sessVXID, ParentVXID: 0,
-			Records: []varnishlog.Record{beginRecord(t, uint(sessVXID), "sess", "0", "HTTP/1")},
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 1, VXID: int64(sessVXID), ParentVXID: 0,
+			Records: []varnishlog.Record{beginRecord(t, sessVXID, "sess", "0", "HTTP/1")},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: rxreqVXID, ParentVXID: sessVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: int64(rxreqVXID), ParentVXID: int64(sessVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+				beginRecord(t, rxreqVXID, "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: bereqVXID, ParentVXID: rxreqVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: int64(bereqVXID), ParentVXID: int64(rxreqVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
+				beginRecord(t, bereqVXID, "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
+				bereqHeaderRecord(t, bereqVXID, "traceparent", bereqTP),
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: esiVXID, ParentVXID: rxreqVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: int64(esiVXID), ParentVXID: int64(rxreqVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(esiVXID), "req", fmt.Sprintf("%d", rxreqVXID), "esi"),
-				reqHeaderRecord(t, uint(esiVXID), "traceparent", esiTP),
+				beginRecord(t, esiVXID, "req", fmt.Sprintf("%d", rxreqVXID), "esi"),
+				reqHeaderRecord(t, esiVXID, "traceparent", esiTP),
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 4, VXID: esiBqVXID, ParentVXID: esiVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 4, VXID: int64(esiBqVXID), ParentVXID: int64(esiVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(esiBqVXID), "bereq", fmt.Sprintf("%d", esiVXID), "fetch"),
-				bereqHeaderRecord(t, uint(esiBqVXID), "traceparent", esiBqTP),
+				beginRecord(t, esiBqVXID, "bereq", fmt.Sprintf("%d", esiVXID), "fetch"),
+				bereqHeaderRecord(t, esiBqVXID, "traceparent", esiBqTP),
 			},
 		},
 	}
@@ -445,11 +445,11 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
 	require.Equal(t, 4, spans.Len(), "session dropped; rxreq + bereq + esi + esi's bereq = 4 spans")
 
-	find := func(vxid uint32) (ptrace.Span, bool) {
+	find := func(vxid uint64) (ptrace.Span, bool) {
 		for i := 0; i < spans.Len(); i++ {
 			s := spans.At(i)
 			v, has := s.Attributes().Get("varnish.vxid")
-			if has && uint32(v.Int()) == vxid {
+			if has && uint64(v.Int()) == vxid {
 				return s, true
 			}
 		}
@@ -496,9 +496,9 @@ func TestBuildTraces_TraceparentDrivesIDs(t *testing.T) {
 // stops anyone from re-adding a links loop by mistake.
 func TestBuildTraces_NoOtelLinks(t *testing.T) {
 	const (
-		rxreqVXID uint32 = 300
-		esiVXID   uint32 = 301
-		bereqVXID uint32 = 302
+		rxreqVXID uint64 = 300
+		esiVXID   uint64 = 301
+		bereqVXID uint64 = 302
 
 		traceIDHex     = "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"
 		rxreqSpanIDHex = "1515151515151515"
@@ -512,36 +512,36 @@ func TestBuildTraces_NoOtelLinks(t *testing.T) {
 	rcv := newTestReceiver(t)
 
 	linkRec := varnishlog.Record{
-		Type:    varnishlog.Client,
-		Tag:     tagByName(t, "Link"),
-		VXID:    uint(rxreqVXID),
-		Payload: varnishlog.Payload(fmt.Sprintf("req %d esi", esiVXID)),
+		IsClient: true,
+		Tag:      tagByName(t, "Link"),
+		VXID:     rxreqVXID,
+		Data:     fmt.Sprintf("req %d esi", esiVXID),
 	}
 
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+				reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
 				linkRec,
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: esiVXID, ParentVXID: rxreqVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: int64(esiVXID), ParentVXID: int64(rxreqVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(esiVXID), "req", fmt.Sprintf("%d", rxreqVXID), "esi"),
-				reqHeaderRecord(t, uint(esiVXID), "traceparent", esiTP),
+				beginRecord(t, esiVXID, "req", fmt.Sprintf("%d", rxreqVXID), "esi"),
+				reqHeaderRecord(t, esiVXID, "traceparent", esiTP),
 			},
 		},
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: bereqVXID, ParentVXID: esiVXID,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: int64(bereqVXID), ParentVXID: int64(esiVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", esiVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
+				beginRecord(t, bereqVXID, "bereq", fmt.Sprintf("%d", esiVXID), "fetch"),
+				bereqHeaderRecord(t, bereqVXID, "traceparent", bereqTP),
 			},
 		},
 	}
@@ -561,9 +561,9 @@ func TestBuildTraces_NoOtelLinks(t *testing.T) {
 func TestBuildTraces_EmptyGroupProducesEmptyTraces(t *testing.T) {
 	rcv := newTestReceiver(t)
 
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
+			Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
 			Level: 1, VXID: 400, ParentVXID: 0,
 			Records: []varnishlog.Record{beginRecord(t, 400, "sess", "0", "HTTP/1")},
 		},
@@ -585,7 +585,7 @@ func TestBuildTraces_EmptyGroupProducesEmptyTraces(t *testing.T) {
 // empty attribute.
 func TestBuildTraces_ConfiguredHeadersEmitAtConfiguredAttrKeys(t *testing.T) {
 	const (
-		rxreqVXID uint32 = 800
+		rxreqVXID uint64 = 800
 
 		traceIDHex     = "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6"
 		rxreqSpanIDHex = "1616161616161616"
@@ -599,17 +599,17 @@ func TestBuildTraces_ConfiguredHeadersEmitAtConfiguredAttrKeys(t *testing.T) {
 		"x-tenant":     "tenant.id",
 	})
 
-	txGrp := []varnishlog.Tx{{
-		Type:   varnishlog.Req,
-		Reason: varnishlog.RxReq,
-		VXID:   rxreqVXID,
+	txGrp := []varnishlog.Transaction{{
+		Type:   varnishlog.TypeRequest,
+		Reason: varnishlog.ReasonRxReq,
+		VXID:   int64(rxreqVXID),
 		Records: []varnishlog.Record{
-			beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-			reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
-			reqHeaderRecord(t, uint(rxreqVXID), "user-agent", "curl/8.0"),
-			reqHeaderRecord(t, uint(rxreqVXID), "host", "example.com"),
-			reqHeaderRecord(t, uint(rxreqVXID), "x-request-id", "req-abc-123"),
-			reqHeaderRecord(t, uint(rxreqVXID), "X-Forwarded-For", "10.0.0.1"),
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
+			reqHeaderRecord(t, rxreqVXID, "user-agent", "curl/8.0"),
+			reqHeaderRecord(t, rxreqVXID, "host", "example.com"),
+			reqHeaderRecord(t, rxreqVXID, "x-request-id", "req-abc-123"),
+			reqHeaderRecord(t, rxreqVXID, "X-Forwarded-For", "10.0.0.1"),
 		},
 	}}
 
@@ -626,11 +626,11 @@ func TestBuildTraces_ConfiguredHeadersEmitAtConfiguredAttrKeys(t *testing.T) {
 	assert.False(t, hasTenant, "configured header not seen in VSL must not emit an empty attribute")
 }
 
-func newTestReceiverRespectSampling(t *testing.T) *varnishcachelogReceiver {
+func newTestReceiverRespectSampling(t *testing.T) *varnishcachelogTraceReceiver {
 	t.Helper()
 	cfg := createDefaultConfig().(*Config)
 	cfg.RespectUpstreamSampling = true
-	return &varnishcachelogReceiver{
+	return &varnishcachelogTraceReceiver{
 		set:             receivertest.NewNopSettings(metadata.Type),
 		cfg:             cfg,
 		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
@@ -643,8 +643,8 @@ func newTestReceiverRespectSampling(t *testing.T) *varnishcachelogReceiver {
 // signals sampled.
 func TestBuildTraces_RespectUpstreamSampling_SampledEmits(t *testing.T) {
 	const (
-		rxreqVXID uint32 = 500
-		bereqVXID uint32 = 501
+		rxreqVXID uint64 = 500
+		bereqVXID uint64 = 501
 
 		traceIDHex     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		rxreqSpanIDHex = "1111111111111111"
@@ -654,21 +654,21 @@ func TestBuildTraces_RespectUpstreamSampling_SampledEmits(t *testing.T) {
 	bereqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, bereqSpanIDHex)
 
 	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.Req, Reason: varnishlog.RxReq,
-			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+				reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
 			},
 		},
 		{
-			Type: varnishlog.BeReq, Reason: varnishlog.Fetch,
-			Level: 2, VXID: bereqVXID, ParentVXID: rxreqVXID,
+			Type: varnishlog.TypeBackend, Reason: varnishlog.ReasonFetch,
+			Level: 2, VXID: int64(bereqVXID), ParentVXID: int64(rxreqVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
+				beginRecord(t, bereqVXID, "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
+				bereqHeaderRecord(t, bereqVXID, "traceparent", bereqTP),
 			},
 		},
 	}
@@ -683,8 +683,8 @@ func TestBuildTraces_RespectUpstreamSampling_SampledEmits(t *testing.T) {
 // their own traceparent (also 00 per VCL propagation) is present.
 func TestBuildTraces_RespectUpstreamSampling_UnsampledDropsWholeGroup(t *testing.T) {
 	const (
-		rxreqVXID uint32 = 510
-		bereqVXID uint32 = 511
+		rxreqVXID uint64 = 510
+		bereqVXID uint64 = 511
 
 		traceIDHex     = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		rxreqSpanIDHex = "3333333333333333"
@@ -694,21 +694,21 @@ func TestBuildTraces_RespectUpstreamSampling_UnsampledDropsWholeGroup(t *testing
 	bereqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, bereqSpanIDHex)
 
 	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.Req, Reason: varnishlog.RxReq,
-			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+				reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
 			},
 		},
 		{
-			Type: varnishlog.BeReq, Reason: varnishlog.Fetch,
-			Level: 2, VXID: bereqVXID, ParentVXID: rxreqVXID,
+			Type: varnishlog.TypeBackend, Reason: varnishlog.ReasonFetch,
+			Level: 2, VXID: int64(bereqVXID), ParentVXID: int64(rxreqVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqVXID), "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqVXID), "traceparent", bereqTP),
+				beginRecord(t, bereqVXID, "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
+				bereqHeaderRecord(t, bereqVXID, "traceparent", bereqTP),
 			},
 		},
 	}
@@ -721,15 +721,15 @@ func TestBuildTraces_RespectUpstreamSampling_UnsampledDropsWholeGroup(t *testing
 // exercises the fail-closed contract: when the flag is on and the
 // root carries no traceparent header at all, the trace is dropped.
 func TestBuildTraces_RespectUpstreamSampling_MissingTraceparentDrops(t *testing.T) {
-	const rxreqVXID uint32 = 520
+	const rxreqVXID uint64 = 520
 
 	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.Req, Reason: varnishlog.RxReq,
-			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
+				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
 			},
 		},
 	}
@@ -742,16 +742,16 @@ func TestBuildTraces_RespectUpstreamSampling_MissingTraceparentDrops(t *testing.
 // cannot be parsed. Prevents a broken upstream from silently opting
 // every request into being emitted.
 func TestBuildTraces_RespectUpstreamSampling_MalformedTraceparentDrops(t *testing.T) {
-	const rxreqVXID uint32 = 530
+	const rxreqVXID uint64 = 530
 
 	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Tx{
+	txGrp := []varnishlog.Transaction{
 		{
-			Type: varnishlog.Req, Reason: varnishlog.RxReq,
-			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", "garbage-not-a-tp"),
+				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+				reqHeaderRecord(t, rxreqVXID, "traceparent", "garbage-not-a-tp"),
 			},
 		},
 	}
@@ -767,11 +767,11 @@ func TestBuildTraces_RespectUpstreamSampling_MalformedTraceparentDrops(t *testin
 // filter.
 func TestBuildTraces_RespectUpstreamSampling_MixedRootsInSession(t *testing.T) {
 	const (
-		sessVXID   uint32 = 600
-		rxreqAVXID uint32 = 601
-		rxreqBVXID uint32 = 602
-		bereqAVXID uint32 = 603
-		bereqBVXID uint32 = 604
+		sessVXID   uint64 = 600
+		rxreqAVXID uint64 = 601
+		rxreqBVXID uint64 = 602
+		bereqAVXID uint64 = 603
+		bereqBVXID uint64 = 604
 
 		traceIDA     = "cccccccccccccccccccccccccccccccc"
 		traceIDB     = "dddddddddddddddddddddddddddddddd"
@@ -786,44 +786,44 @@ func TestBuildTraces_RespectUpstreamSampling_MixedRootsInSession(t *testing.T) {
 	tpBbereq := fmt.Sprintf("00-%s-%s-00", traceIDB, bereqSpanIDB)
 
 	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Tx{
-		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 1, VXID: sessVXID, ParentVXID: 0,
-			Records: []varnishlog.Record{beginRecord(t, uint(sessVXID), "sess", "0", "HTTP/1")}},
-		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: rxreqAVXID, ParentVXID: sessVXID,
+	txGrp := []varnishlog.Transaction{
+		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 1, VXID: int64(sessVXID), ParentVXID: 0,
+			Records: []varnishlog.Record{beginRecord(t, sessVXID, "sess", "0", "HTTP/1")}},
+		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: int64(rxreqAVXID), ParentVXID: int64(sessVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqAVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
-				reqHeaderRecord(t, uint(rxreqAVXID), "traceparent", tpA),
+				beginRecord(t, rxreqAVXID, "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, rxreqAVXID, "traceparent", tpA),
 			}},
-		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: rxreqBVXID, ParentVXID: sessVXID,
+		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 2, VXID: int64(rxreqBVXID), ParentVXID: int64(sessVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqBVXID), "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
-				reqHeaderRecord(t, uint(rxreqBVXID), "traceparent", tpB),
+				beginRecord(t, rxreqBVXID, "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
+				reqHeaderRecord(t, rxreqBVXID, "traceparent", tpB),
 			}},
-		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: bereqAVXID, ParentVXID: rxreqAVXID,
+		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: int64(bereqAVXID), ParentVXID: int64(rxreqAVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqAVXID), "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqAVXID), "traceparent", tpAbereq),
+				beginRecord(t, bereqAVXID, "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch"),
+				bereqHeaderRecord(t, bereqAVXID, "traceparent", tpAbereq),
 			}},
-		{Type: varnishlog.TxUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: bereqBVXID, ParentVXID: rxreqBVXID,
+		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
+			Level: 3, VXID: int64(bereqBVXID), ParentVXID: int64(rxreqBVXID),
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(bereqBVXID), "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch"),
-				bereqHeaderRecord(t, uint(bereqBVXID), "traceparent", tpBbereq),
+				beginRecord(t, bereqBVXID, "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch"),
+				bereqHeaderRecord(t, bereqBVXID, "traceparent", tpBbereq),
 			}},
 	}
 	traces := rcv.buildTraces(txGrp)
 	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
 	require.Equal(t, 2, spans.Len(), "only trace A (sampled) should be emitted: rxreq A + bereq A")
 
-	seen := make(map[uint32]bool)
+	seen := make(map[uint64]bool)
 	for i := 0; i < spans.Len(); i++ {
 		v, ok := spans.At(i).Attributes().Get("varnish.vxid")
 		require.True(t, ok)
-		seen[uint32(v.Int())] = true
+		seen[uint64(v.Int())] = true
 	}
 	assert.True(t, seen[rxreqAVXID], "sampled rxreq A must be emitted")
 	assert.True(t, seen[bereqAVXID], "sampled trace A's bereq must be emitted")
@@ -838,7 +838,7 @@ func TestBuildTraces_RespectUpstreamSampling_MixedRootsInSession(t *testing.T) {
 // tailsampling.
 func TestBuildTraces_RespectUpstreamSampling_DisabledEmitsUnsampled(t *testing.T) {
 	const (
-		rxreqVXID uint32 = 700
+		rxreqVXID uint64 = 700
 
 		traceIDHex     = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 		rxreqSpanIDHex = "9999999999999999"
@@ -846,12 +846,13 @@ func TestBuildTraces_RespectUpstreamSampling_DisabledEmitsUnsampled(t *testing.T
 	rxreqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, rxreqSpanIDHex)
 
 	rcv := newTestReceiver(t)
-	txGrp := []varnishlog.Tx{
-		{Type: varnishlog.Req, Reason: varnishlog.RxReq,
-			Level: 1, VXID: rxreqVXID, ParentVXID: 0,
+	rcv.cfg.RespectUpstreamSampling = false
+	txGrp := []varnishlog.Transaction{
+		{Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
 			Records: []varnishlog.Record{
-				beginRecord(t, uint(rxreqVXID), "req", "0", "rxreq"),
-				reqHeaderRecord(t, uint(rxreqVXID), "traceparent", rxreqTP),
+				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+				reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
 			}},
 	}
 	traces := rcv.buildTraces(txGrp)

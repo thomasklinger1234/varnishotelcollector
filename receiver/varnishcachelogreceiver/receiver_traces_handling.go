@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	varnishlog "gitlab.com/uplex/varnish/varnishapi/pkg/log"
+	varnishlog "github.com/varnish/varnish-go/log"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
@@ -19,7 +19,7 @@ import (
 // It returns an "invalid tag" error when the field count is outside [min, max].
 // Pass max = -1 to skip the upper bound check. Pass min = 0 to skip the lower bound.
 func splitPayload(rec varnishlog.Record, min, max int) ([]string, error) {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	n := len(parts)
 	if min > 0 && n < min {
 		return nil, fmt.Errorf("invalid tag: %s", rec.Tag.String())
@@ -31,7 +31,7 @@ func splitPayload(rec varnishlog.Record, min, max int) ([]string, error) {
 }
 
 type varnishTransactionLink struct {
-	VXID   uint64
+	VXID   int64
 	Type   string
 	Reason string
 }
@@ -79,8 +79,8 @@ type varnishTransactionResp struct {
 }
 
 type varnishTransaction struct {
-	VXID       uint64
-	VXIDParent uint64
+	VXID       int64
+	VXIDParent int64
 	VCL        string
 	Handling   string
 	Reason     string
@@ -144,15 +144,15 @@ type varnishTransactionCacheHit struct {
 type varnishTagTransformerFunc func(vtx *varnishTransaction, rec varnishlog.Record) error
 
 func transformVCLLog(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) > 0 {
-		tx.Logs = append(tx.Logs, rec.Payload.String())
+		tx.Logs = append(tx.Logs, rec.Data)
 	}
 	return nil
 }
 
 func transformReqURL(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -161,7 +161,7 @@ func transformReqURL(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformReqMethod(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -170,7 +170,7 @@ func transformReqMethod(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformVCLUse(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -179,11 +179,11 @@ func transformVCLUse(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformLink(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) < 3 {
-		return fmt.Errorf("Invalid link received: %s", rec.Payload.String())
+		return fmt.Errorf("Invalid link received: %s", rec.Data)
 	}
-	id, err := strconv.ParseUint(parts[1], 10, 64)
+	id, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return err
 	}
@@ -196,9 +196,9 @@ func transformLink(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformStorage(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) != 2 {
-		return fmt.Errorf("Invalid storage received: %s", rec.Payload.String())
+		return fmt.Errorf("Invalid storage received: %s", rec.Data)
 	}
 	tx.Storage = &varnishTransactionStorage{
 		Name: parts[0],
@@ -208,7 +208,7 @@ func transformStorage(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformRespReason(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -217,7 +217,7 @@ func transformRespReason(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformRespStatus(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -230,7 +230,7 @@ func transformRespStatus(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformFilters(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -265,7 +265,7 @@ func transformAnyProtocol(rec varnishlog.Record) (string, string, error) {
 	if _, err := splitPayload(rec, 1, 1); err != nil {
 		return "", "", err
 	}
-	proto, protoVer, found := strings.Cut(rec.Payload.String(), "/")
+	proto, protoVer, found := strings.Cut(rec.Data, "/")
 	if !found {
 		return "", "", fmt.Errorf("invalid tag: %s", rec.Tag.String())
 	}
@@ -328,7 +328,7 @@ func transformAnyAcct(tx *varnishTransaction, rec varnishlog.Record) error {
 		return err
 	}
 	var reqHdrLen, reqBodyLen, reqLen, respHdrLen, respBodyLen, respLen uint64
-	if scanned, err := fmt.Sscanf(rec.Payload.String(), "%d %d %d %d %d %d", &reqHdrLen, &reqBodyLen, &reqLen, &respHdrLen, &respBodyLen, &respLen); err != nil || scanned != 6 {
+	if scanned, err := fmt.Sscanf(rec.Data, "%d %d %d %d %d %d", &reqHdrLen, &reqBodyLen, &reqLen, &respHdrLen, &respBodyLen, &respLen); err != nil || scanned != 6 {
 		return fmt.Errorf("failed to parse Acct: %s", err)
 	}
 	tx.Req.HdrBytes = reqHdrLen
@@ -377,7 +377,7 @@ func transformVCLCall(tx *varnishTransaction, rec varnishlog.Record) error {
 }
 
 func transformAnyError(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts := strings.Fields(rec.Payload.String())
+	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -389,7 +389,7 @@ func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(tx.capturedHeaders) == 0 {
 		return nil
 	}
-	payload := rec.Payload.String()
+	payload := rec.Data
 	// todo: refactor using bytes. methods to avoid string allocations and only emit a string at the end if necessarry - if possible and feasible - also use splitN
 	colonIdx := strings.Index(payload, ":")
 	if colonIdx <= 0 {
@@ -423,7 +423,7 @@ func transformBegin(tx *varnishTransaction, rec varnishlog.Record) error {
 	if err != nil {
 		return err
 	}
-	xid, err := strconv.ParseUint(parts[1], 10, 64)
+	xid, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return err
 	}
@@ -444,10 +444,10 @@ func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 	var xid, fetched, clen uint64
 	var ttl, grace, keep float64
 
-	scanned, _ := fmt.Sscanf(rec.Payload.String(), "%d %f %f %f %d %d",
+	scanned, _ := fmt.Sscanf(rec.Data, "%d %f %f %f %d %d",
 		&xid, &ttl, &grace, &keep, &fetched, &clen)
 	if scanned < 4 {
-		return fmt.Errorf("failed to parse Hit: scanned=%d payload=%q", scanned, rec.Payload.String())
+		return fmt.Errorf("failed to parse Hit: scanned=%d payload=%q", scanned, rec.Data)
 	}
 	if scanned == 6 {
 		tx.Handling = "streaming-hit"
@@ -465,36 +465,35 @@ func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 
 var (
 	transformFuncs = map[string]varnishTagTransformerFunc{
-		"VCL_Log": transformVCLLog,
-		"VCL_use": transformVCLUse,
-		//"VCL_return":    transformVCLReturn, // TODO(thomasklinger1234): VCL_return or VCL_call for handling?
-		"VCL_call":      transformVCLCall,
-		"VCL_Error":     transformAnyError,
-		"ReqURL":        transformReqURL,
-		"BereqURL":      transformReqURL,
-		"ReqMethod":     transformReqMethod,
-		"BereqMethod":   transformReqMethod,
-		"Link":          transformLink,
-		"RespReason":    transformRespReason,
-		"BerespReason":  transformRespReason,
-		"RespStatus":    transformRespStatus,
-		"BerespStatus":  transformRespStatus,
-		"Filters":       transformFilters,
-		"Timestamp":     transformTimestamp,
-		"Storage":       transformStorage,
-		"ReqProtocol":   transformReqProtocol,
-		"RespProtocol":  transformRespProtocol,
-		"BereqProtocol": transformReqProtocol,
-		"ReqStart":      transformReqStart,
-		"BackendOpen":   transformBackendOpen,
-		"ReqAcct":       transformAnyAcct,
-		"BereqAcct":     transformAnyAcct,
-		"Error":         transformAnyError,
-		"FetchError":    transformAnyError,
-		"ReqHeader":     transformReqHeader,
-		"BereqHeader":   transformReqHeader,
-		"Begin":         transformBegin,
-		"Hit":           transformHit,
+		varnishlog.TagVCLLog.String():        transformVCLLog,
+		varnishlog.TagVCLUse.String():        transformVCLUse,
+		varnishlog.TagVCLCall.String():       transformVCLCall,
+		varnishlog.TagVCLError.String():      transformAnyError,
+		varnishlog.TagReqURL.String():        transformReqURL,
+		varnishlog.TagBereqURL.String():      transformReqURL,
+		varnishlog.TagReqMethod.String():     transformReqMethod,
+		varnishlog.TagBereqMethod.String():   transformReqMethod,
+		varnishlog.TagLink.String():          transformLink,
+		varnishlog.TagRespReason.String():    transformRespReason,
+		varnishlog.TagBerespReason.String():  transformRespReason,
+		varnishlog.TagRespStatus.String():    transformRespStatus,
+		varnishlog.TagBerespStatus.String():  transformRespStatus,
+		varnishlog.TagFilters.String():       transformFilters,
+		varnishlog.TagTimestamp.String():     transformTimestamp,
+		varnishlog.TagStorage.String():       transformStorage,
+		varnishlog.TagReqProtocol.String():   transformReqProtocol,
+		varnishlog.TagRespProtocol.String():  transformRespProtocol,
+		varnishlog.TagBereqProtocol.String(): transformReqProtocol,
+		varnishlog.TagReqStart.String():      transformReqStart,
+		varnishlog.TagBackendOpen.String():   transformBackendOpen,
+		varnishlog.TagReqAcct.String():       transformAnyAcct,
+		varnishlog.TagBereqAcct.String():     transformAnyAcct,
+		varnishlog.TagError.String():         transformAnyError,
+		varnishlog.TagFetchError.String():    transformAnyError,
+		varnishlog.TagReqHeader.String():     transformReqHeader,
+		varnishlog.TagBereqHeader.String():   transformReqHeader,
+		varnishlog.TagBegin.String():         transformBegin,
+		varnishlog.TagHit.String():           transformHit,
 	}
 )
 

@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachestatreceiver/internal/metadata"
+	"gitlab.com/iglou.eu/goulc/wildcard"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
 
-	varnishstats "gitlab.com/uplex/varnish/varnishapi/pkg/stats"
+	varnishstats "github.com/varnish/varnish-go/stat"
+	varnishversion "github.com/varnish/varnish-go/version"
 )
 
 var (
@@ -26,10 +28,9 @@ var (
 
 type varnishstatCounter struct {
 	Description string `json:"description"`
-	Flag        string `json:"flag"`
-	Format      string `json:"format"`
+	Flags       string `json:"flags"`
+	Semantics   string `json:"semantics"`
 	Value       uint64 `json:"value"`
-	Level       string `json:"level"`
 }
 type varnishstatCounters struct {
 	Timestamp string                        `json:"timestamp"`
@@ -45,28 +46,19 @@ type varnishcachestatScraper struct {
 func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
 	metrics := pmetric.NewMetrics()
 
-	vsc := varnishstats.New()
-	if err := vsc.Timeout(v.cfg.Timeout); err != nil {
-		return metrics, fmt.Errorf("error setting vsc timeout: %w", err)
+	vsc, err := varnishstats.New().
+		SetTimeout(v.cfg.Timeout).
+		SetName(v.cfg.WorkingDirectory).
+		Attach()
+	if err != nil {
+		return metrics, fmt.Errorf("failed to attach to vsc: %w", err)
 	}
 	defer func() {
-		vsc.Release()
+		vsc.Close()
 	}()
 
-	for _, x := range v.cfg.IncludeTags {
-		if err := vsc.Include(x); err != nil {
-			return metrics, fmt.Errorf("error including tags: %w", err)
-		}
-	}
-
-	for _, x := range v.cfg.ExcludeTags {
-		if err := vsc.Exclude(x); err != nil {
-			return metrics, fmt.Errorf("error excluding tags: %w", err)
-		}
-	}
-
-	if err := vsc.Attach(v.cfg.WorkingDirectory); err != nil {
-		return metrics, fmt.Errorf("failed to attach to vsc: %w", err)
+	if _, _, err := vsc.Update(); err != nil {
+		return metrics, fmt.Errorf("error updating vsc: %w", err)
 	}
 
 	statsTimestamp := time.Now()
@@ -75,22 +67,35 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 		Counters:  make(map[string]varnishstatCounter),
 	}
 
-	if err := vsc.Read(func(name string, val uint64) bool {
-		mDesc, err := vsc.D9n(name)
-		if err != nil {
-			return false
+	for cName, cVal := range vsc.Stats {
+		// TODO(thomasklinger1234): Workaround for https://github.com/varnish/varnish-go/issues/30 (lack of -X/-I support).
+		// 							We try to simulate it here with best effort using a wildcard package. Exclusion has priority over inclusion.
+		isIncluded := true
+
+		for _, x := range v.cfg.ExcludeTags {
+			if wildcard.Match(x, cName) {
+				isIncluded = false
+				break
+			}
 		}
 
-		stats.Counters[name] = varnishstatCounter{
-			Description: mDesc.String(),
-			Flag:        mDesc.Semantics.String(),
-			Format:      mDesc.Format.String(),
-			Value:       val,
-			Level:       mDesc.Level.String(),
+		for _, i := range v.cfg.IncludeTags {
+			if !wildcard.Match(i, cName) && !isIncluded {
+				isIncluded = false
+				break
+			}
 		}
-		return true
-	}); err != nil {
-		return metrics, fmt.Errorf("error getting stats: %w", err)
+
+		if !isIncluded {
+			continue
+		}
+
+		stats.Counters[cName] = varnishstatCounter{
+			Description: cVal.SDesc,
+			Flags:       cVal.Flags.String(),
+			Semantics:   cVal.Semantics.String(),
+			Value:       *cVal.Value,
+		}
 	}
 
 	// find latest revision for VBE.* metrics
@@ -129,11 +134,13 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 		scope := scopeMetrics.Scope()
 		scope.SetName(metadata.ScopeName)
 		scope.SetVersion(v.set.BuildInfo.Version)
+		scope.Attributes().PutStr("varnish.version", varnishversion.Version())
+		scope.Attributes().PutStr("varnish.revision", varnishversion.Commit())
 
 		metric := scopeMetrics.Metrics().AppendEmpty()
 		metric.SetName(name)
 		metric.SetDescription(stat.Description)
-		metric.SetUnit(stat.Format)
+		metric.SetUnit(stat.Semantics)
 
 		if isVBE := strings.HasPrefix(name, "VBE."); isVBE {
 			vIdent := strings.ReplaceAll(name, vbeMostRecentPrefix+".", "")
@@ -298,8 +305,10 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 			}
 		}
 
-		switch stat.Flag {
-		case varnishstats.Counter.String():
+		// NOTE: All other stats are passed through.
+
+		switch stat.Semantics {
+		case "counter":
 			mSum := metric.SetEmptySum()
 			mSum.SetIsMonotonic(true)
 			mSum.SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
@@ -307,12 +316,12 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 			mSumDp.SetStartTimestamp(v.startTime)
 			mSumDp.SetTimestamp(pcommon.NewTimestampFromTime(statsTimestamp))
 			mSumDp.SetIntValue(int64(stat.Value))
-		case varnishstats.Gauge.String():
+		case "gauge":
 			mGauge := metric.SetEmptyGauge()
 			mGaugeDp := mGauge.DataPoints().AppendEmpty()
 			mGaugeDp.SetTimestamp(pcommon.NewTimestampFromTime(statsTimestamp))
 			mGaugeDp.SetIntValue(int64(stat.Value))
-		case varnishstats.S7sBitmap.String():
+		case "bitmap":
 			if strings.HasSuffix(name, ".happy") {
 				upValue := 0.0
 				if stat.Value > 0 && (stat.Value&uint64(1)) > 0 {
@@ -329,11 +338,8 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 			} else {
 				v.set.Logger.Warn("Unsupported bitmap counter", zap.String("name", name))
 			}
-		case varnishstats.S7sUnknown.String():
-			v.set.Logger.Warn("Unsupported metric type: "+stat.Flag, zap.String("name", name))
-			continue
 		default:
-			v.set.Logger.Warn("Unsupported metric type: "+stat.Flag, zap.String("name", name))
+			v.set.Logger.Warn("Unsupported metric type: "+stat.Flags, zap.String("name", name))
 			continue
 		}
 
