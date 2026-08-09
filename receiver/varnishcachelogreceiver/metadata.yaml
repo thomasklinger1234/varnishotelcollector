@@ -9,7 +9,7 @@ status:
     development: [traces]
   distributions: [varnishotelcollector]
   codeowners:
-    active: [thomasklinger1234]
+    active: [thomasklinger1234, AljoschaDembowsky]
     seeking_new: true
   unsupported_platforms: [windows]
 
