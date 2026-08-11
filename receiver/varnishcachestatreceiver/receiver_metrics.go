@@ -144,6 +144,8 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 
 		if isVBE := strings.HasPrefix(name, "VBE."); isVBE {
 			vIdent := strings.ReplaceAll(name, vbeMostRecentPrefix+".", "")
+			vIdentParts := strings.Split(vIdent, ".")
+			vIdent = strings.Join(vIdentParts[:len(vIdentParts)-1], ".") // get rid of the metric name after the last "."
 
 			if hits := BackendPatternUUID.FindAllStringSubmatch(vIdent, -1); len(hits) > 0 && len(hits[0]) >= 3 {
 				resource.Attributes().PutStr("backend", extractBackendNameFromCounter(hits[0][2]))
@@ -152,13 +154,12 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 				resource.Attributes().PutStr("backend", extractBackendNameFromCounter(hits[0][1]))
 				resource.Attributes().PutStr("server", strings.Replace(hits[0][2], ",,", ":", 1))
 			} else {
-				resource.Attributes().PutStr("backend", strings.Split(vIdent, ".")[0])
+				resource.Attributes().PutStr("backend", vIdent)
 				resource.Attributes().PutStr("server", "unknown")
 			}
 
-			vIdentParts := strings.Split(name, ".")
 			if len(vIdentParts) > 0 {
-				metric.SetName("backend_" + vIdentParts[len(vIdentParts)-1])
+				metric.SetName("backend_" + vIdentParts[len(vIdentParts)-1]) // backend_{counter}
 			}
 		}
 
@@ -345,7 +346,7 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 
 		// name sanitization for unmapped metrics
 		// append namespace prefix
-		metric.SetName("varnish_" + normalizeMetricName(name))
+		metric.SetName("varnish_" + normalizeMetricName(metric.Name()))
 	}
 
 	return metrics, nil
