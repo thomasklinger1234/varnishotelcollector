@@ -24,6 +24,7 @@ func createDefaultConfig() component.Config {
 			"user-agent": "user_agent.original",
 			"host":       "http.request.header.host",
 		},
+		CaptureResponseHeaders:  map[string]string{},
 		RespectUpstreamSampling: true,
 	}
 

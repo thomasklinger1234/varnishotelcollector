@@ -67,6 +67,7 @@ type varnishTransactionReq struct {
 	ProtoVersion string
 	HdrBytes     uint64
 	BodyBytes    uint64
+	Headers      map[string]string
 }
 
 type varnishTransactionResp struct {
@@ -77,6 +78,7 @@ type varnishTransactionResp struct {
 	ProtoVersion string
 	HdrBytes     uint64
 	BodyBytes    uint64
+	Headers      map[string]string
 }
 
 type varnishTransaction struct {
@@ -100,13 +102,8 @@ type varnishTransaction struct {
 	// SLT_Begin: sess, req, bereq
 	Type  string
 	Level uint64
-	// capturedHeaders is the receiver's shared list of header to attribute
-	// mappings (lowercase, sorted, requiredCapturedHeader at slot 0).
-	// capturedHeaderValues is a per-tx fixed-size slice indexed the same
-	// way and populated by transformReqHeader.
-	capturedHeaders      []capturedHeader
-	capturedHeaderValues []string
 
+	// todo: re-evaluate this
 	// traceparent parse cache. Set once by extractTraceContext;
 	// buildTraces hits this path repeatedly for the same tx (self
 	// context + parent lookups).
@@ -117,15 +114,12 @@ type varnishTransaction struct {
 	tpFlags  byte
 }
 
-// todo: part of capture header refactor
-// traceparent returns the captured trace-context header value.
-// requiredCapturedHeader is always at slot 0 by construction of
-// buildCapturedHeaders, so the length check is only defensive.
+// todo: refactor this
 func (tx *varnishTransaction) traceparent() string {
-	if len(tx.capturedHeaderValues) == 0 {
-		return ""
+	if v, ok := tx.Req.Headers[requiredCapturedHeader]; ok {
+		return v
 	}
-	return tx.capturedHeaderValues[0]
+	return ""
 }
 
 // varnishTransactionCacheHit mirrors the fields of the VSL `Hit` record
@@ -386,27 +380,29 @@ func transformAnyError(tx *varnishTransaction, rec varnishlog.Record) error {
 	return nil
 }
 
+func parseHeader(data string) (string, string, error) {
+	hdrName, hdrVal, found := strings.Cut(data, ":")
+	if !found || hdrName == "" {
+		return "", "", fmt.Errorf("malformed header: %s", data)
+	}
+	return strings.ToLower(hdrName), strings.TrimLeft(hdrVal, " "), nil
+}
+
 func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
-	if len(tx.capturedHeaders) == 0 {
-		return nil
+	hdrName, hdrVal, err := parseHeader(rec.Data)
+	if err != nil {
+		return fmt.Errorf("failed to parse tag '%s': %s", rec.Tag.String(), err)
 	}
-	payload := rec.Data
-	payloadSplit := strings.SplitN(payload, ":", 2)
-	if len(payloadSplit) != 2 || payloadSplit[0] == "" {
-		var partial string
-		if len(payload) > 5 {
-			partial = payload[:5]
-		}
-		return fmt.Errorf("invalid tag: %s for payload (redacted): %s", rec.Tag.String(), partial)
+	tx.Req.Headers[hdrName] = hdrVal
+	return nil
+}
+
+func transformRespHeader(tx *varnishTransaction, rec varnishlog.Record) error {
+	hdrName, hdrVal, err := parseHeader(rec.Data)
+	if err != nil {
+		return fmt.Errorf("failed to parse tag '%s': %s", rec.Tag.String(), err)
 	}
-	name := payloadSplit[0]
-	value := strings.TrimLeft(payloadSplit[1], " ")
-	for i, h := range tx.capturedHeaders {
-		if strings.EqualFold(name, h.Name) {
-			tx.capturedHeaderValues[i] = value
-			return nil
-		}
-	}
+	tx.Resp.Headers[hdrName] = hdrVal
 	return nil
 }
 
@@ -482,6 +478,8 @@ var (
 		varnishlog.TagBereqAcct.String():     transformAnyAcct,
 		varnishlog.TagError.String():         transformAnyError,
 		varnishlog.TagFetchError.String():    transformAnyError,
+		varnishlog.TagRespHeader.String():    transformRespHeader,
+		varnishlog.TagBerespHeader.String():  transformRespHeader,
 		varnishlog.TagReqHeader.String():     transformReqHeader,
 		varnishlog.TagBereqHeader.String():   transformReqHeader,
 		varnishlog.TagBegin.String():         transformBegin,
@@ -522,16 +520,16 @@ func extractTraceparent(tp string) (pcommon.TraceID, pcommon.SpanID, byte, error
 	return tid, sid, flagsBuf[0], nil
 }
 
-func setHeaderSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
-	for i, h := range tx.capturedHeaders {
-		if h.AttrKey == "" {
-			continue
+func setHeaderSpanAttrs(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
+	for _, h := range opts.requestHdrMapping {
+		if v, ok := tx.Req.Headers[h.HdrName]; ok {
+			span.Attributes().PutStr(h.OtelAttrKey, v)
 		}
-		val := tx.capturedHeaderValues[i]
-		if val == "" {
-			continue
+	}
+	for _, h := range opts.responseHdrMapping {
+		if v, ok := tx.Req.Headers[h.HdrName]; ok {
+			span.Attributes().PutStr(h.OtelAttrKey, v)
 		}
-		span.Attributes().PutStr(h.AttrKey, val)
 	}
 }
 
@@ -566,10 +564,7 @@ func setVarnishSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 }
 
 // setCacheHitSpanAttrs emits `varnish.cache.*` attributes for cache-hit
-// spans. `grace_hit` is true when the object was served past its TTL but
-// still within its grace window; that is the state which triggers Varnish's
-// asynchronous background revalidation, so it is the queryable signal for
-// "why did a bgfetch happen for this URL".
+// spans.
 func setCacheHitSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	isHit := tx.Handling == "hit" || tx.Handling == "streaming-hit"
 	if !isHit {
@@ -664,11 +659,11 @@ func setSpanTimestamps(span ptrace.Span, tx *varnishTransaction) {
 	}
 }
 
-func updateSpan(span ptrace.Span, tx *varnishTransaction) {
+func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
 	if tx.Resp.Status >= 400 && tx.Resp.Status <= 599 {
 		span.Status().SetCode(ptrace.StatusCodeError)
 	}
-	setHeaderSpanAttrs(span, tx)
+	setHeaderSpanAttrs(span, tx, opts)
 	setVarnishSpanAttrs(span, tx)
 	setBackendSpanAttrs(span, tx)
 	setRequestSpanAttrs(span, tx)

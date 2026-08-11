@@ -81,9 +81,9 @@ func newTestReceiver(t *testing.T) *varnishcachelogTraceReceiver {
 	t.Helper()
 	cfg := createDefaultConfig().(*Config)
 	return &varnishcachelogTraceReceiver{
-		set:             receivertest.NewNopSettings(metadata.Type),
-		cfg:             cfg,
-		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+		set:      receivertest.NewNopSettings(metadata.Type),
+		cfg:      cfg,
+		spanOpts: builSpanOpts(cfg),
 	}
 }
 
@@ -92,9 +92,9 @@ func newTestReceiverWithHeaders(t *testing.T, captured map[string]string) *varni
 	cfg := createDefaultConfig().(*Config)
 	cfg.CaptureRequestHeaders = captured
 	return &varnishcachelogTraceReceiver{
-		set:             receivertest.NewNopSettings(metadata.Type),
-		cfg:             cfg,
-		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+		set:      receivertest.NewNopSettings(metadata.Type),
+		cfg:      cfg,
+		spanOpts: builSpanOpts(cfg),
 	}
 }
 
@@ -631,9 +631,9 @@ func newTestReceiverRespectSampling(t *testing.T) *varnishcachelogTraceReceiver 
 	cfg := createDefaultConfig().(*Config)
 	cfg.RespectUpstreamSampling = true
 	return &varnishcachelogTraceReceiver{
-		set:             receivertest.NewNopSettings(metadata.Type),
-		cfg:             cfg,
-		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+		set:      receivertest.NewNopSettings(metadata.Type),
+		cfg:      cfg,
+		spanOpts: builSpanOpts(cfg),
 	}
 }
 

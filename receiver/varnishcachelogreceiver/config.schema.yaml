@@ -26,6 +26,16 @@ $defs:
           Default:
             user-agent: user_agent.original
             host:       http.request.header.host
+      capture_response_headers:
+        type: object
+        additionalProperties:
+          type: string
+        description: |
+          Mapping from response header name (case-insensitive) to the OTel
+          span attribute name the value should be emitted under. The
+          attribute name is used verbatim; no sanitization is applied.
+
+          Default:
       respect_upstream_sampling:
         type: boolean
         description: |
