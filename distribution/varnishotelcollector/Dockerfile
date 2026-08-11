@@ -4,11 +4,6 @@ FROM varnish:${VARNISH_VERSION}
 
 USER root
 
-RUN set -ex; \
-    curl -s http://pki.ottogroup.com/Ottogroup-Root-CA-v01.pem.txt > /usr/local/share/ca-certificates/Ottogroup-Root-CA-v01.crt; \
-    curl -s http://pki.ottogroup.com/Ottogroup-Issuing0201-CA-v01.crt > /usr/local/share/ca-certificates/Ottogroup-Issuing0201-CA-v01.crt; \
-    update-ca-certificates --fresh;
-
 RUN set -e; \
     apt-get update -y; \
     apt-get install -y \
