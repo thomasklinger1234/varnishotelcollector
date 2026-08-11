@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +12,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
+
+	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/spanname"
 )
 
 // splitPayload returns the space-separated fields of rec.Payload.
@@ -633,24 +634,14 @@ func setResponseSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 
 func setSpanName(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Side == "client" {
-		// TODO(thomasklinger1234): Find suitable naming - Aljoscha: I'm not sure if this is sufficient, but it will work for the PoC
-		urlPart := "/"
-		parsedUrl, _ := url.Parse(tx.Req.URL)
-		if parsedUrl != nil {
-			splitUrl := strings.Split(parsedUrl.Path, "/")
-			if len(splitUrl) >= 2 {
-				urlPart, _ = url.JoinPath("/", splitUrl[1])
-				if len(splitUrl) > 2 {
-					urlPart = fmt.Sprintf("%s/...", urlPart)
-				}
-			}
-		} else {
-			urlPart = "<invalid-url>"
+		route := spanname.Normalize(tx.Req.URL)
+		if route != "/" && route != spanname.InvalidURLPlaceholder {
+			span.Attributes().PutStr(string(semconv.HTTPRouteKey), route)
 		}
 		if tx.Reason == "esi" {
-			span.SetName(fmt.Sprintf("ESI %s %s %s", tx.Req.Method, urlPart, tx.Type))
+			span.SetName(fmt.Sprintf("ESI %s %s %s", tx.Req.Method, route, tx.Type))
 		} else {
-			span.SetName(fmt.Sprintf("%s %s %s", tx.Req.Method, urlPart, tx.Type))
+			span.SetName(fmt.Sprintf("%s %s %s", tx.Req.Method, route, tx.Type))
 		}
 	}
 	if tx.Side == "backend" {
