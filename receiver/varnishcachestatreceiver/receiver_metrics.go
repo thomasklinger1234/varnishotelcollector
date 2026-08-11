@@ -24,6 +24,34 @@ var (
 
 	// <name>(<ip>,(<something>),<port>)
 	BackendPatternParen = regexp.MustCompile(`(.*)\((.*)\)`)
+
+	lckDbgBusyPattern      = regexp.MustCompile("LCK.(.*).dbg_busy")
+	lckDbgTryPattern       = regexp.MustCompile("LCK.(.*).dbg_try")
+	lckCreatPattern        = regexp.MustCompile("LCK.(.*).creat")
+	lckDestroyPattern      = regexp.MustCompile("LCK.(.*).destroy")
+	lckLocksPattern        = regexp.MustCompile("LCK.(.*).locks")
+	mempoolAllocsPattern   = regexp.MustCompile("MEMPOOL.(.*).allocs")
+	mempoolFreesPattern    = regexp.MustCompile("MEMPOOL.(.*).frees")
+	mempoolLivePattern     = regexp.MustCompile("MEMPOOL.(.*).live")
+	mempoolPoolPattern     = regexp.MustCompile("MEMPOOL.(.*).pool")
+	mempoolRandryPattern   = regexp.MustCompile("MEMPOOL.(.*).randry")
+	mempoolRecyclePattern  = regexp.MustCompile("MEMPOOL.(.*).recycle")
+	mempoolSurplusPattern  = regexp.MustCompile("MEMPOOL.(.*).surplus")
+	mempoolSzActualPattern = regexp.MustCompile("MEMPOOL.(.*).sz_actual")
+	mempoolSzWantedPattern = regexp.MustCompile("MEMPOOL.(.*).sz_wanted")
+	mempoolTimeoutPattern  = regexp.MustCompile("MEMPOOL.(.*).timeout")
+	mempoolToosmallPattern = regexp.MustCompile("MEMPOOL.(.*).toosmall")
+	smaCReqPattern         = regexp.MustCompile("SMA.(.*).c_req")
+	smaCFailPattern        = regexp.MustCompile("SMA.(.*).c_fail")
+	smaCBytesPattern       = regexp.MustCompile("SMA.(.*).c_bytes")
+	smaCFreedPattern       = regexp.MustCompile("SMA.(.*).c_freed")
+	smaGAllocPattern       = regexp.MustCompile("SMA.(.*).g_alloc")
+	smaGBytesPattern       = regexp.MustCompile("SMA.(.*).g_bytes")
+	smaGSpacePattern       = regexp.MustCompile("SMA.(.*).g_space")
+	waiterConnsPattern     = regexp.MustCompile("WAITER.(.*).conns")
+	waiterRemclosePattern  = regexp.MustCompile("WAITER.(.*).remclose")
+	waiterTimeoutPattern   = regexp.MustCompile("WAITER.(.*).timeout")
+	waiterActionPattern    = regexp.MustCompile("WAITER.(.*).action")
 )
 
 type varnishstatCounter struct {
@@ -163,143 +191,143 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 			}
 		}
 
-		if hits := regexp.MustCompile("LCK.(.*).dbg_busy").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := lckDbgBusyPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("lck_dbg_busy")
 		}
 
-		if hits := regexp.MustCompile("LCK.(.*).dbg_try").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := lckDbgTryPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("lck_dbg_try_fail")
 		}
 
-		if hits := regexp.MustCompile("LCK.(.*).creat").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := lckCreatPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("target", hits[0][1])
 			metric.SetName("lock_created")
 		}
 
-		if hits := regexp.MustCompile("LCK.(.*).destroy").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := lckDestroyPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("target", hits[0][1])
 			metric.SetName("lock_destroyed")
 		}
 
-		if hits := regexp.MustCompile("LCK.(.*).locks").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := lckLocksPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("target", hits[0][1])
 			metric.SetName("lock_operations")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).allocs").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolAllocsPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_allocs")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).frees").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolFreesPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_frees")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).live").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolLivePattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_live")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).pool").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolPoolPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_pool")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).randry").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolRandryPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_randry")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).recycle").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolRecyclePattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_recycle")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).surplus").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolSurplusPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_surplus")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).sz_actual").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolSzActualPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_sz_actual")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).sz_wanted").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolSzWantedPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_sz_wanted")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).timeout").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolTimeoutPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_timeout")
 		}
 
-		if hits := regexp.MustCompile("MEMPOOL.(.*).toosmall").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := mempoolToosmallPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			metric.SetName("mempool_toosmall")
 		}
 
-		if hits := regexp.MustCompile("SMA.(.*).c_req").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := smaCReqPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("type", strings.ToLower(hits[0][1]))
 			metric.SetName("sma_c_req")
 		}
 
-		if hits := regexp.MustCompile("SMA.(.*).c_fail").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := smaCFailPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("type", strings.ToLower(hits[0][1]))
 			metric.SetName("sma_c_fail")
 		}
 
-		if hits := regexp.MustCompile("SMA.(.*).c_bytes").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := smaCBytesPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("type", strings.ToLower(hits[0][1]))
 			metric.SetName("sma_c_bytes")
 		}
 
-		if hits := regexp.MustCompile("SMA.(.*).c_freed").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := smaCFreedPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("type", strings.ToLower(hits[0][1]))
 			metric.SetName("sma_c_freed")
 		}
 
-		if hits := regexp.MustCompile("SMA.(.*).g_alloc").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := smaGAllocPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("type", strings.ToLower(hits[0][1]))
 			metric.SetName("sma_g_alloc")
 		}
 
-		if hits := regexp.MustCompile("SMA.(.*).g_bytes").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := smaGBytesPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("type", strings.ToLower(hits[0][1]))
 			metric.SetName("sma_g_bytes")
 		}
 
-		if hits := regexp.MustCompile("SMA.(.*).g_space").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := smaGSpacePattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("type", strings.ToLower(hits[0][1]))
 			metric.SetName("sma_g_space")
 		}
 
-		if hits := regexp.MustCompile("WAITER.(.*).conns").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := waiterConnsPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			if metadata.ReceiverVarnishcachestatBreakPrometheusExporterCompatFeatureGate.IsEnabled() {
 				metric.SetName("waiter_conns") // TODO(thomasklinger1234): [BREAKING] prometheus_varnish_exporter does not rename
 			}
 		}
 
-		if hits := regexp.MustCompile("WAITER.(.*).remclose").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := waiterRemclosePattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			if metadata.ReceiverVarnishcachestatBreakPrometheusExporterCompatFeatureGate.IsEnabled() {
 				metric.SetName("waiter_remclose") // TODO(thomasklinger1234): [BREAKING] prometheus_varnish_exporter does not rename
 			}
 		}
 
-		if hits := regexp.MustCompile("WAITER.(.*).timeout").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := waiterTimeoutPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			if metadata.ReceiverVarnishcachestatBreakPrometheusExporterCompatFeatureGate.IsEnabled() {
 				metric.SetName("waiter_timeout") // TODO(thomasklinger1234): [BREAKING] prometheus_varnish_exporter does not rename
 			}
 		}
 
-		if hits := regexp.MustCompile("WAITER.(.*).action").FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
+		if hits := waiterActionPattern.FindAllStringSubmatch(name, -1); len(hits) > 0 && len(hits[0]) > 0 {
 			resource.Attributes().PutStr("id", hits[0][1])
 			if metadata.ReceiverVarnishcachestatBreakPrometheusExporterCompatFeatureGate.IsEnabled() {
 				metric.SetName("waiter_action") // TODO(thomasklinger1234): [BREAKING] prometheus_varnish_exporter does not rename
