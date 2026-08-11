@@ -390,28 +390,19 @@ func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 		return nil
 	}
 	payload := rec.Data
-	// todo: refactor using bytes. methods to avoid string allocations and only emit a string at the end if necessarry - if possible and feasible - also use splitN
-	colonIdx := strings.Index(payload, ":")
-	if colonIdx <= 0 {
+	payloadSplit := strings.SplitN(payload, ":", 2)
+	if len(payloadSplit) != 2 || payloadSplit[0] == "" {
 		var partial string
 		if len(payload) > 5 {
 			partial = payload[:5]
 		}
 		return fmt.Errorf("invalid tag: %s for payload (redacted): %s", rec.Tag.String(), partial)
 	}
-	// todo: refactor this with trim
-	// Empty values are legal (RFC 9110 §5.5). VSL emits `Name: value`
-	// with a space after the colon, but tolerate `Name:value` and
-	// `Name:` (empty) for robustness against non-standard producers.
-	valueStart := colonIdx + 1
-	if valueStart < len(payload) && payload[valueStart] == ' ' {
-		valueStart++
-	}
-	name := payload[:colonIdx]
-	// todo: refactor the whole capture header thing to be more robust and simple - i dislike the idea of having 3 different types to capture some headers
+	name := payloadSplit[0]
+	value := strings.TrimLeft(payloadSplit[1], " ")
 	for i, h := range tx.capturedHeaders {
 		if strings.EqualFold(name, h.Name) {
-			tx.capturedHeaderValues[i] = payload[valueStart:]
+			tx.capturedHeaderValues[i] = value
 			return nil
 		}
 	}
