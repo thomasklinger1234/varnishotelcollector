@@ -344,7 +344,8 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 		}
 
 		// name sanitization for unmapped metrics
-		metric.SetName(normalizeMetricName(name))
+		// append namespace prefix
+		metric.SetName("varnish_" + normalizeMetricName(name))
 	}
 
 	return metrics, nil

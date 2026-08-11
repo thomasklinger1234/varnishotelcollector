@@ -65,7 +65,7 @@ exporters:
     without_scope_info: true # removes otel_* labels in Prometheus HTTP output
     resource_to_telemetry_conversion:
       enabled: true
-    namespace: varnish
+    namespace: "" # varnish_ is already prepended as the namespace
 ```
 
 ## Known Limitations

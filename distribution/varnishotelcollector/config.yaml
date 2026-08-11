@@ -1,7 +1,9 @@
 receivers:
   varnishcachestat:
-    collection_interval: 10s
-  varnishcachelog: {}
+    collection_interval: "10s"
+    working_directory: ""
+  varnishcachelog:
+    working_directory: ""
 
 processors:
   batch:
@@ -20,7 +22,7 @@ exporters:
     without_scope_info: true # removes otel_* labels in Prometheus HTTP output
     resource_to_telemetry_conversion:
       enabled: true
-    namespace: varnish
+    namespace: ""
 
 service:
   pipelines:
