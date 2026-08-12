@@ -312,3 +312,84 @@ func Test_setHeaderSpanAttrs(t *testing.T) {
 		})
 	}
 }
+
+func Test_setCustomSpanAttrs(t *testing.T) {
+	type args struct {
+		span ptrace.Span
+		tx   *varnishTransaction
+	}
+	type wants struct {
+		attrs map[string]string
+	}
+	tests := []struct {
+		name string
+		args args
+		want wants
+	}{
+		{
+			name: "sets custom attributes from OTEL_Attribute logs",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx: &varnishTransaction{Logs: []string{
+					"OTEL_Attribute: app.feature=checkout",
+					"OTEL_Attribute: app.tier=premium",
+				}},
+			},
+			want: wants{attrs: map[string]string{
+				"app.feature": "checkout",
+				"app.tier":    "premium",
+			}},
+		},
+		{
+			name: "trims spaces and keeps text after first equals in value",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx: &varnishTransaction{Logs: []string{
+					"OTEL_Attribute:   custom.key   =   some=value   ",
+				}},
+			},
+			want: wants{attrs: map[string]string{
+				"custom.key": "some=value",
+			}},
+		},
+		{
+			name: "ignores malformed and non-prefixed logs",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx: &varnishTransaction{Logs: []string{
+					"OTEL_Attribute: missingequals",
+					"OTEL_Attribute: =novalidkey",
+					"OTEL_Attribute: novalidvalue=",
+					"some other log message",
+				}},
+			},
+			want: wants{attrs: map[string]string{}},
+		},
+		{
+			name: "last value wins for same key",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx: &varnishTransaction{Logs: []string{
+					"OTEL_Attribute: app.feature=search",
+					"OTEL_Attribute: app.feature=recommendations",
+				}},
+			},
+			want: wants{attrs: map[string]string{
+				"app.feature": "recommendations",
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setCustomSpanAttrs(tt.args.span, tt.args.tx)
+
+			gotAttrs := tt.args.span.Attributes().AsRaw()
+			assert.Equal(t, len(tt.want.attrs), len(gotAttrs))
+			for key, wantVal := range tt.want.attrs {
+				gotVal, ok := tt.args.span.Attributes().Get(key)
+				assert.True(t, ok, "expected attribute %q to be set", key)
+				assert.Equal(t, wantVal, gotVal.Str())
+			}
+		})
+	}
+}
