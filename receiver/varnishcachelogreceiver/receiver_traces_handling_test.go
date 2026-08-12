@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	varnishlog "github.com/varnish/varnish-go/log"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 func vclCallRecord(t *testing.T, vxid uint64, phase string) varnishlog.Record {
@@ -243,5 +244,71 @@ func emptyTransaction() *varnishTransaction {
 		Errors: make([]string, 0),
 		Logs:   make([]string, 0),
 		Links:  make([]varnishTransactionLink, 0),
+	}
+}
+
+func transactionWithHeaders(reqHdrs, respHdrs map[string]string) *varnishTransaction {
+	result := emptyTransaction()
+	result.Req.Headers = reqHdrs
+	result.Resp.Headers = respHdrs
+	return result
+}
+
+func Test_setHeaderSpanAttrs(t *testing.T) {
+	type args struct {
+		span ptrace.Span
+		tx   *varnishTransaction
+		opts spanOpts
+	}
+	type result struct {
+		value string
+		ok    bool
+	}
+	type wants struct {
+		otelAttrs map[string]result
+	}
+	tests := []struct {
+		name  string
+		args  args
+		wants wants
+	}{
+		{
+			name: "set otel attribute with header values",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx:   transactionWithHeaders(map[string]string{"x-foo": "bar"}, map[string]string{"x-baz": "foobar"}),
+				opts: spanOpts{
+					requestHdrMapping:  []headerMapping{{HdrName: "x-foo", OtelAttrKey: "http.request.header.x_foo"}},
+					responseHdrMapping: []headerMapping{{HdrName: "x-baz", OtelAttrKey: "http.response.header.x_baz"}},
+				},
+			},
+			wants: wants{
+				otelAttrs: map[string]result{"http.request.header.x_foo": {value: "bar", ok: true}, "http.response.header.x_baz": {value: "foobar", ok: true}},
+			},
+		},
+		{
+			name: "set otel attribute with header values but fail on one",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx:   transactionWithHeaders(map[string]string{"x-foo": "bar"}, map[string]string{"x-baz": "foobar"}),
+				opts: spanOpts{
+					requestHdrMapping:  []headerMapping{{HdrName: "x-foo", OtelAttrKey: "http.request.header.x_foo"}},
+					responseHdrMapping: []headerMapping{{HdrName: "x-not-existing", OtelAttrKey: "http.response.header.x_baz"}},
+				},
+			},
+			wants: wants{
+				otelAttrs: map[string]result{"http.request.header.x_foo": {value: "bar", ok: true}, "http.response.header.x_baz": {value: "", ok: false}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setHeaderSpanAttrs(tt.args.span, tt.args.tx, tt.args.opts)
+			for key, want := range tt.wants.otelAttrs {
+				value, ok := tt.args.span.Attributes().Get(key)
+				assert.Equal(t, ok, want.ok)
+				assert.Equal(t, value.Str(), want.value)
+			}
+		})
 	}
 }

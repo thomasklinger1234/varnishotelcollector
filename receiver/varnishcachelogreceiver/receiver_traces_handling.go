@@ -527,7 +527,7 @@ func setHeaderSpanAttrs(span ptrace.Span, tx *varnishTransaction, opts spanOpts)
 		}
 	}
 	for _, h := range opts.responseHdrMapping {
-		if v, ok := tx.Req.Headers[h.HdrName]; ok {
+		if v, ok := tx.Resp.Headers[h.HdrName]; ok {
 			span.Attributes().PutStr(h.OtelAttrKey, v)
 		}
 	}
