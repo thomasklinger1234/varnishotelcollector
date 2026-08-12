@@ -24,6 +24,11 @@ import (
 
 var _ receiver.Traces = &varnishcachelogTraceReceiver{}
 
+// requiredTraceparentHeader is captured on every transaction regardless of
+// user configuration and is required on every transaction. If the traceparent
+// is missing we will drop the trace/span and print a log message.
+const requiredTraceparentHeader = "traceparent"
+
 type varnishcachelogTraceReceiver struct {
 	set          receiver.Settings
 	cfg          *Config
@@ -355,7 +360,7 @@ func buildHeaderMapping(mapping map[string]string) []headerMapping {
 	for k, v := range mapping {
 		k = strings.ToLower(strings.TrimSpace(k))
 		v = strings.TrimSpace(v)
-		if k == "" || v == "" || k == requiredCapturedHeader {
+		if k == "" || v == "" || k == requiredTraceparentHeader {
 			continue
 		}
 		result = append(result, headerMapping{})

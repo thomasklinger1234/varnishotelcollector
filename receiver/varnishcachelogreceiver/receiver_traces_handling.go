@@ -114,9 +114,8 @@ type varnishTransaction struct {
 	tpFlags  byte
 }
 
-// todo: refactor this
 func (tx *varnishTransaction) traceparent() string {
-	if v, ok := tx.Req.Headers[requiredCapturedHeader]; ok {
+	if v, ok := tx.Req.Headers[requiredTraceparentHeader]; ok {
 		return v
 	}
 	return ""
