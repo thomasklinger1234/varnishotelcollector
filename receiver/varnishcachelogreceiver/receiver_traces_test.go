@@ -81,9 +81,9 @@ func newTestReceiver(t *testing.T) *varnishcachelogTraceReceiver {
 	t.Helper()
 	cfg := createDefaultConfig().(*Config)
 	return &varnishcachelogTraceReceiver{
-		set:             receivertest.NewNopSettings(metadata.Type),
-		cfg:             cfg,
-		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+		set:      receivertest.NewNopSettings(metadata.Type),
+		cfg:      cfg,
+		spanOpts: buildSpanOpts(cfg),
 	}
 }
 
@@ -92,9 +92,9 @@ func newTestReceiverWithHeaders(t *testing.T, captured map[string]string) *varni
 	cfg := createDefaultConfig().(*Config)
 	cfg.CaptureRequestHeaders = captured
 	return &varnishcachelogTraceReceiver{
-		set:             receivertest.NewNopSettings(metadata.Type),
-		cfg:             cfg,
-		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+		set:      receivertest.NewNopSettings(metadata.Type),
+		cfg:      cfg,
+		spanOpts: buildSpanOpts(cfg),
 	}
 }
 
@@ -631,9 +631,9 @@ func newTestReceiverRespectSampling(t *testing.T) *varnishcachelogTraceReceiver 
 	cfg := createDefaultConfig().(*Config)
 	cfg.RespectUpstreamSampling = true
 	return &varnishcachelogTraceReceiver{
-		set:             receivertest.NewNopSettings(metadata.Type),
-		cfg:             cfg,
-		capturedHeaders: buildCapturedHeaders(cfg.CaptureRequestHeaders),
+		set:      receivertest.NewNopSettings(metadata.Type),
+		cfg:      cfg,
+		spanOpts: buildSpanOpts(cfg),
 	}
 }
 
@@ -858,4 +858,55 @@ func TestBuildTraces_RespectUpstreamSampling_DisabledEmitsUnsampled(t *testing.T
 	traces := rcv.buildTraces(txGrp)
 	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
 	require.Equal(t, 1, spans.Len(), "with RespectUpstreamSampling=false, unsampled traceparent must still emit")
+}
+
+func Test_buildHeaderMapping(t *testing.T) {
+	type args struct {
+		mapping map[string]string
+	}
+	tests := []struct {
+		name string
+		args args
+		want []headerMapping
+	}{
+		{
+			name: "build header mapping",
+			args: args{
+				mapping: map[string]string{
+					"user-agent": "user_agent.original",
+					"host":       "http.request.header.host",
+				},
+			},
+			want: []headerMapping{
+				{HdrName: "user-agent", OtelAttrKey: "user_agent.original"},
+				{HdrName: "host", OtelAttrKey: "http.request.header.host"},
+			},
+		},
+		{
+			name: "drop invalid header mapping",
+			args: args{
+				mapping: map[string]string{
+					"":     "user_agent.original",
+					"host": "http.request.header.host",
+				},
+			},
+			want: []headerMapping{
+				{HdrName: "host", OtelAttrKey: "http.request.header.host"},
+			},
+		},
+		{
+			name: "drop invalid header mapping if otel attr is empty",
+			args: args{
+				mapping: map[string]string{
+					"host": "",
+				},
+			},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, buildHeaderMapping(tt.args.mapping), "buildHeaderMapping(%v)", tt.args.mapping)
+		})
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/metadata"
@@ -23,13 +24,28 @@ import (
 
 var _ receiver.Traces = &varnishcachelogTraceReceiver{}
 
+// requiredTraceparentHeader is captured on every transaction regardless of
+// user configuration and is required on every transaction. If the traceparent
+// is missing we will drop the trace/span and print a log message.
+const requiredTraceparentHeader = "traceparent"
+
 type varnishcachelogTraceReceiver struct {
-	set             receiver.Settings
-	cfg             *Config
-	nextConsumer    consumer.Traces
-	capturedHeaders []capturedHeader
-	wg              sync.WaitGroup
-	cancel          context.CancelFunc
+	set          receiver.Settings
+	cfg          *Config
+	nextConsumer consumer.Traces
+	spanOpts     spanOpts
+	wg           sync.WaitGroup
+	cancel       context.CancelFunc
+}
+
+type headerMapping struct {
+	HdrName     string
+	OtelAttrKey string
+}
+
+type spanOpts struct {
+	requestHdrMapping  []headerMapping
+	responseHdrMapping []headerMapping
 }
 
 func (v *varnishcachelogTraceReceiver) Start(ctx context.Context, host component.Host) error {
@@ -176,7 +192,7 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 		span.Attributes().PutStr("varnish.tx.reason", vtx.Reason)
 		span.Status().SetCode(ptrace.StatusCodeOk)
 
-		updateSpan(span, vtx)
+		updateSpan(span, vtx, v.spanOpts)
 		if flags&0x01 == 1 {
 			span.SetFlags(0x01)
 		}
@@ -299,15 +315,19 @@ func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.Span
 
 func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varnishTransaction {
 	vtx := &varnishTransaction{
-		VXID:                 tx.VXID,
-		Events:               make([]varnishTransactionEvent, 0),
-		Errors:               make([]string, 0),
-		Logs:                 make([]string, 0),
-		Links:                make([]varnishTransactionLink, 0),
-		Side:                 tx.Type.String(),
-		Reason:               tx.Reason.String(),
-		capturedHeaders:      v.capturedHeaders,
-		capturedHeaderValues: make([]string, len(v.capturedHeaders)),
+		VXID: tx.VXID,
+		Req: varnishTransactionReq{
+			Headers: make(map[string]string),
+		},
+		Resp: varnishTransactionResp{
+			Headers: make(map[string]string),
+		},
+		Events: make([]varnishTransactionEvent, 0),
+		Errors: make([]string, 0),
+		Logs:   make([]string, 0),
+		Links:  make([]varnishTransactionLink, 0),
+		Side:   tx.Type.String(),
+		Reason: tx.Reason.String(),
 	}
 	for _, txRec := range tx.Records {
 		if txRec.IsClient {
@@ -328,9 +348,33 @@ func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varn
 
 func newVarnishcacheLogReceiver(set receiver.Settings, config *Config, nextConsumer consumer.Traces) receiver.Traces {
 	return &varnishcachelogTraceReceiver{
-		set:             set,
-		cfg:             config,
-		nextConsumer:    nextConsumer,
-		capturedHeaders: buildCapturedHeaders(config.CaptureRequestHeaders),
+		set:          set,
+		cfg:          config,
+		nextConsumer: nextConsumer,
+		spanOpts:     buildSpanOpts(config),
+	}
+}
+
+func buildHeaderMapping(mapping map[string]string) []headerMapping {
+	var result []headerMapping
+	for hdrName, otelAttr := range mapping {
+		hdrName = strings.ToLower(strings.TrimSpace(hdrName))
+		otelAttr = strings.TrimSpace(otelAttr)
+		if hdrName == "" || otelAttr == "" || hdrName == requiredTraceparentHeader {
+			continue
+		}
+		result = append(result, headerMapping{
+			HdrName:     hdrName,
+			OtelAttrKey: otelAttr,
+		})
+	}
+
+	return result
+}
+
+func buildSpanOpts(cfg *Config) spanOpts {
+	return spanOpts{
+		requestHdrMapping:  buildHeaderMapping(cfg.CaptureRequestHeaders),
+		responseHdrMapping: buildHeaderMapping(cfg.CaptureResponseHeaders),
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	varnishlog "github.com/varnish/varnish-go/log"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 func vclCallRecord(t *testing.T, vxid uint64, phase string) varnishlog.Record {
@@ -187,86 +188,21 @@ func TestTransformVCLCall_LifecyclePhasesNeverSetHandling(t *testing.T) {
 	assert.False(t, hasHandling, "lifecycle-only VCL_call phases must not set varnish.handling")
 }
 
-func TestExtractTraceContext_CachesSuccessfulParse(t *testing.T) {
-	const tp = "00-11111111111111111111111111111111-2222222222222222-01"
-	vtx := &varnishTransaction{
-		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
-		capturedHeaderValues: []string{tp},
-	}
-
-	tid1, sid1, flags1, ok1 := extractTraceContext(vtx)
-	require.True(t, ok1)
-
-	vtx.capturedHeaderValues[0] = "not-a-valid-traceparent-at-all"
-
-	tid2, sid2, flags2, ok2 := extractTraceContext(vtx)
-	assert.True(t, ok2, "cache must survive after-the-fact source mutation")
-	assert.Equal(t, tid1, tid2, "TraceID must come from cache, not re-parse")
-	assert.Equal(t, sid1, sid2, "SpanID must come from cache, not re-parse")
-	assert.Equal(t, flags1, flags2, "flags must come from cache, not re-parse")
-}
-
-func TestExtractTraceContext_CachesFailedParse(t *testing.T) {
-	vtx := &varnishTransaction{
-		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
-		capturedHeaderValues: []string{"malformed"},
-	}
-
-	_, _, _, ok1 := extractTraceContext(vtx)
-	require.False(t, ok1)
-
-	vtx.capturedHeaderValues[0] = "00-11111111111111111111111111111111-2222222222222222-01"
-
-	_, _, _, ok2 := extractTraceContext(vtx)
-	assert.False(t, ok2, "failed-parse cache must not be revived by later valid header")
-}
-
-func TestExtractTraceContext_CachesMissingHeader(t *testing.T) {
-	vtx := &varnishTransaction{
-		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
-		capturedHeaderValues: []string{""},
-	}
-
-	_, _, _, ok1 := extractTraceContext(vtx)
-	require.False(t, ok1)
-
-	vtx.capturedHeaderValues[0] = "00-11111111111111111111111111111111-2222222222222222-01"
-
-	_, _, _, ok2 := extractTraceContext(vtx)
-	assert.False(t, ok2, "missing-header cache must not be revived by later populated header")
-}
-
-// Regression: the fork's payload() trims trailing NUL, so a Varnish 9
-// payload that used to arrive as `Name:\x00` (empty value + C terminator)
-// now arrives as `Name:` (length 5, colon at end). Older guard rejected
-// this as "invalid tag". Empty header values are legal (RFC 9110 §5.5)
-// and were previously accepted only because the trailing NUL made the
-// length-check pass. Also covers `Name:value` (no space after colon).
 func TestTransformReqHeader_ValueEdgeCases(t *testing.T) {
-	captured := []capturedHeader{
-		{Name: requiredCapturedHeader},
-		{Name: "x-empty", AttrKey: "http.request.header.x_empty"},
-		{Name: "x-nospace", AttrKey: "http.request.header.x_nospace"},
-		{Name: "x-normal", AttrKey: "http.request.header.x_normal"},
-	}
-
 	cases := []struct {
 		name    string
 		slot    int
 		payload string
 		want    string
 	}{
-		{"empty value trimmed of NUL", 1, "x-empty:", ""},
-		{"no space after colon", 2, "x-nospace:value", "value"},
-		{"normal name-colon-space-value", 3, "x-normal: value", "value"},
+		{"empty value trimmed of NUL", 1, "x-foo:", ""},
+		{"no space after colon", 2, "x-foo:value", "value"},
+		{"normal name-colon-space-value", 3, "x-foo: value", "value"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			vtx := &varnishTransaction{
-				capturedHeaders:      captured,
-				capturedHeaderValues: make([]string, len(captured)),
-			}
+			vtx := emptyTransaction()
 			rec := varnishlog.Record{
 				Tag:       varnishlog.TagReqHeader,
 				VXID:      1,
@@ -276,16 +212,13 @@ func TestTransformReqHeader_ValueEdgeCases(t *testing.T) {
 			}
 			err := transformReqHeader(vtx, rec)
 			require.NoError(t, err, "empty and no-space values must not error")
-			assert.Equal(t, c.want, vtx.capturedHeaderValues[c.slot])
+			assert.Equal(t, c.want, vtx.Req.Headers["x-foo"])
 		})
 	}
 }
 
 func TestTransformReqHeader_MalformedRejected(t *testing.T) {
-	vtx := &varnishTransaction{
-		capturedHeaders:      []capturedHeader{{Name: requiredCapturedHeader}},
-		capturedHeaderValues: make([]string, 1),
-	}
+	vtx := emptyTransaction()
 	for _, payload := range []string{"", "no-colon-at-all", ":no-name"} {
 		rec := varnishlog.Record{
 			Tag:       varnishlog.TagReqHeader,
@@ -299,13 +232,83 @@ func TestTransformReqHeader_MalformedRejected(t *testing.T) {
 	}
 }
 
-func BenchmarkExtractTraceparent(b *testing.B) {
-	const tp = "00-11111111111111111111111111111111-2222222222222222-01"
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, _, _, err := extractTraceparent(tp); err != nil {
-			b.Fatal(err)
-		}
+func emptyTransaction() *varnishTransaction {
+	return &varnishTransaction{
+		Req: varnishTransactionReq{
+			Headers: make(map[string]string),
+		},
+		Resp: varnishTransactionResp{
+			Headers: make(map[string]string),
+		},
+		Events: make([]varnishTransactionEvent, 0),
+		Errors: make([]string, 0),
+		Logs:   make([]string, 0),
+		Links:  make([]varnishTransactionLink, 0),
+	}
+}
+
+func transactionWithHeaders(reqHdrs, respHdrs map[string]string) *varnishTransaction {
+	result := emptyTransaction()
+	result.Req.Headers = reqHdrs
+	result.Resp.Headers = respHdrs
+	return result
+}
+
+func Test_setHeaderSpanAttrs(t *testing.T) {
+	type args struct {
+		span ptrace.Span
+		tx   *varnishTransaction
+		opts spanOpts
+	}
+	type result struct {
+		value string
+		ok    bool
+	}
+	type wants struct {
+		otelAttrs map[string]result
+	}
+	tests := []struct {
+		name  string
+		args  args
+		wants wants
+	}{
+		{
+			name: "set otel attribute with header values",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx:   transactionWithHeaders(map[string]string{"x-foo": "bar"}, map[string]string{"x-baz": "foobar"}),
+				opts: spanOpts{
+					requestHdrMapping:  []headerMapping{{HdrName: "x-foo", OtelAttrKey: "http.request.header.x_foo"}},
+					responseHdrMapping: []headerMapping{{HdrName: "x-baz", OtelAttrKey: "http.response.header.x_baz"}},
+				},
+			},
+			wants: wants{
+				otelAttrs: map[string]result{"http.request.header.x_foo": {value: "bar", ok: true}, "http.response.header.x_baz": {value: "foobar", ok: true}},
+			},
+		},
+		{
+			name: "set otel attribute with header values but fail on one",
+			args: args{
+				span: ptrace.NewSpan(),
+				tx:   transactionWithHeaders(map[string]string{"x-foo": "bar"}, map[string]string{"x-baz": "foobar"}),
+				opts: spanOpts{
+					requestHdrMapping:  []headerMapping{{HdrName: "x-foo", OtelAttrKey: "http.request.header.x_foo"}},
+					responseHdrMapping: []headerMapping{{HdrName: "x-not-existing", OtelAttrKey: "http.response.header.x_baz"}},
+				},
+			},
+			wants: wants{
+				otelAttrs: map[string]result{"http.request.header.x_foo": {value: "bar", ok: true}, "http.response.header.x_baz": {value: "", ok: false}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setHeaderSpanAttrs(tt.args.span, tt.args.tx, tt.args.opts)
+			for key, want := range tt.wants.otelAttrs {
+				value, ok := tt.args.span.Attributes().Get(key)
+				assert.Equal(t, ok, want.ok)
+				assert.Equal(t, value.Str(), want.value)
+			}
+		})
 	}
 }
