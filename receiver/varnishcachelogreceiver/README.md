@@ -28,14 +28,14 @@ for creating C bindings.
 
 By default, no settings are required.
 
-| Field                       | Default                                 | Description                                                                                                                                                                                                                                                                                                                                 |
-|-----------------------------|-----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `working_directory`         | `""`                                    | The working directory of the Varnish instance. This maps to the `-n` parameter for `varnishd`.                                                                                                                                                                                                                                              |
-| `timeout`                   | `"5s"`                                  | The VSM connection timeout. This maps to the `-t` parameter for `varnishlog`.                                                                                                                                                                                                                                                               |
-| `vsl_query`                 | `""`                                    | The VSL query to filter logs. This maps to the `-q` parameter for `varnishlog`. See *vsl(7)* for more details.                                                                                                                                                                                                                              |
-| `capture_request_headers`   | `{"user_agent": "user_agent.original"}` | The `capture_request_header` maps HTTP request headers to OTEL attributes. The `traceparent` HTTP header is alawys captured.                                                                                                                                                                                                                |
-| `capture_response_headers`  | `{}`                                    | The `capture_response_header` maps HTTP response headers to OTEL attributes.                                                                                                                                                                                                                                                                |
-| `respect_upstream_sampling` | `true`                                  | When `true`, honor the W3C traceparent `sampled` flag on each trace's root client request. Drops the whole trace (rxreq + bereqs + ESI subs) unless the root's traceparent has `sampled=1`. Missing or malformed traceparent on the root counts as unsampled (fail-closed). Only enable when the upstream is trusted to inject traceparent. |
+| Field                       | Default                                                                     | Description                                                                                                                                                                                                                                                                                                                                 |
+|-----------------------------|-----------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `working_directory`         | `""`                                                                        | The working directory of the Varnish instance. This maps to the `-n` parameter for `varnishd`.                                                                                                                                                                                                                                              |
+| `timeout`                   | `"5s"`                                                                      | The VSM connection timeout. This maps to the `-t` parameter for `varnishlog`.                                                                                                                                                                                                                                                               |
+| `vsl_query`                 | `""`                                                                        | The VSL query to filter logs. This maps to the `-q` parameter for `varnishlog`. See *vsl(7)* for more details.                                                                                                                                                                                                                              |
+| `capture_request_headers`   | `{"user_agent": "user_agent.original", "host": "http.request.header.host"}` | The `capture_request_header` maps HTTP request headers to OTEL attributes. The `traceparent` HTTP header is alawys captured.                                                                                                                                                                                                                |
+| `capture_response_headers`  | `{}`                                                                        | The `capture_response_header` maps HTTP response headers to OTEL attributes.                                                                                                                                                                                                                                                                |
+| `respect_upstream_sampling` | `true`                                                                      | When `true`, honor the W3C traceparent `sampled` flag on each trace's root client request. Drops the whole trace (rxreq + bereqs + ESI subs) unless the root's traceparent has `sampled=1`. Missing or malformed traceparent on the root counts as unsampled (fail-closed). Only enable when the upstream is trusted to inject traceparent. |
 
 The full schema can be found in [config.schema.yaml](./config.schema.yaml).
 
@@ -44,6 +44,59 @@ The full schema can be found in [config.schema.yaml](./config.schema.yaml).
 ```yaml
 receivers:
   varnishcachelog: { }
+```
+
+## Usage
+
+### Add custom attributes
+
+To attach custom OpenTelemetry span attributes from Varnish write `VCL_Log` recordsl whose payload starts with the prefix `OTEL_Attribute:`.
+
+This works no matter how the message is produced:
+
+- directly from VCL via `std.log(...)`
+- from a VMOD that emits `VCL_Log` records itself
+
+#### Message format
+
+Use this exact pattern:
+
+```text
+OTEL_Attribute: <key>=<value>
+```
+
+Valid examples:
+
+```text
+OTEL_Attribute: app.feature=checkout
+OTEL_Attribute: tenant.id=acme
+OTEL_Attribute:varnish.custom_attribute=custom_value=test
+```
+
+Parsing rules:
+
+- the prefix must be exactly `OTEL_Attribute:`
+- the receiver splits on the first `=` only
+- whitespace around the key and value is trimmed
+- both key and value must be non-empty
+- malformed messages are ignored silently
+- if the same key is logged multiple times in one transaction, the last value wins
+- configured header mappings from `capture_request_headers` and `capture_response_headers` take precedence over attributes coming from `VCL_Log`
+
+
+#### Example: set attributes with `std.log`
+
+```vcl
+import std;
+
+sub vcl_recv {
+    std.log("OTEL_Attribute: app.feature=checkout");
+    std.log("OTEL_Attribute: app.environment=prod");
+
+    if (req.http.X-Tenant-ID) {
+        std.log("OTEL_Attribute: tenant.id=" + req.http.X-Tenant-ID);
+    }
+}
 ```
 
 [Varnish Cache]: https://www.varnish.org/
