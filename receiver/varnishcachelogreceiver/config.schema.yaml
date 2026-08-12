@@ -35,7 +35,7 @@ $defs:
           span attribute name the value should be emitted under. The
           attribute name is used verbatim; no sanitization is applied.
 
-          Default:
+          Default: {}
       respect_upstream_sampling:
         type: boolean
         description: |

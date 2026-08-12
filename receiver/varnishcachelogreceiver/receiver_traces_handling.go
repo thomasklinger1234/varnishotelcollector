@@ -382,7 +382,13 @@ func transformAnyError(tx *varnishTransaction, rec varnishlog.Record) error {
 func parseHeader(data string) (string, string, error) {
 	hdrName, hdrVal, found := strings.Cut(data, ":")
 	if !found || hdrName == "" {
-		return "", "", fmt.Errorf("malformed header: %s", data)
+		var safeOutput string
+		if len(data) > 5 {
+			safeOutput = data[:5] + "..."
+		} else {
+			safeOutput = data
+		}
+		return "", "", fmt.Errorf("malformed header: %s", safeOutput)
 	}
 	return strings.ToLower(hdrName), strings.TrimLeft(hdrVal, " "), nil
 }
@@ -390,7 +396,7 @@ func parseHeader(data string) (string, string, error) {
 func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 	hdrName, hdrVal, err := parseHeader(rec.Data)
 	if err != nil {
-		return fmt.Errorf("failed to parse tag '%s': %s", rec.Tag.String(), err)
+		return fmt.Errorf("failed to parse tag '%s': %w", rec.Tag.String(), err)
 	}
 	tx.Req.Headers[hdrName] = hdrVal
 	return nil
@@ -399,7 +405,7 @@ func transformReqHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 func transformRespHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 	hdrName, hdrVal, err := parseHeader(rec.Data)
 	if err != nil {
-		return fmt.Errorf("failed to parse tag '%s': %s", rec.Tag.String(), err)
+		return fmt.Errorf("failed to parse tag '%s': %w", rec.Tag.String(), err)
 	}
 	tx.Resp.Headers[hdrName] = hdrVal
 	return nil

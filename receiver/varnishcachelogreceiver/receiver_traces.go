@@ -351,25 +351,28 @@ func newVarnishcacheLogReceiver(set receiver.Settings, config *Config, nextConsu
 		set:          set,
 		cfg:          config,
 		nextConsumer: nextConsumer,
-		spanOpts:     builSpanOpts(config),
+		spanOpts:     buildSpanOpts(config),
 	}
 }
 
 func buildHeaderMapping(mapping map[string]string) []headerMapping {
 	var result []headerMapping
-	for k, v := range mapping {
-		k = strings.ToLower(strings.TrimSpace(k))
-		v = strings.TrimSpace(v)
-		if k == "" || v == "" || k == requiredTraceparentHeader {
+	for hdrName, otelAttr := range mapping {
+		hdrName = strings.ToLower(strings.TrimSpace(hdrName))
+		otelAttr = strings.TrimSpace(otelAttr)
+		if hdrName == "" || otelAttr == "" || hdrName == requiredTraceparentHeader {
 			continue
 		}
-		result = append(result, headerMapping{})
+		result = append(result, headerMapping{
+			HdrName:     hdrName,
+			OtelAttrKey: otelAttr,
+		})
 	}
 
 	return result
 }
 
-func builSpanOpts(cfg *Config) spanOpts {
+func buildSpanOpts(cfg *Config) spanOpts {
 	return spanOpts{
 		requestHdrMapping:  buildHeaderMapping(cfg.CaptureRequestHeaders),
 		responseHdrMapping: buildHeaderMapping(cfg.CaptureResponseHeaders),
