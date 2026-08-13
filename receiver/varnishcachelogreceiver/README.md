@@ -50,7 +50,7 @@ receivers:
 
 ### Add custom attributes
 
-To attach custom OpenTelemetry span attributes from Varnish write `VCL_Log` recordsl whose payload starts with the prefix `OTEL_Attribute:`.
+To attach custom OpenTelemetry span attributes from Varnish write `VCL_Log` records whose payload starts with the prefix `OTEL_Attribute:`.
 
 This works no matter how the message is produced:
 
