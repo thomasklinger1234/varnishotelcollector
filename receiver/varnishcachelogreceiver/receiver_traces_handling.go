@@ -667,12 +667,6 @@ func setSpanTimestamps(span ptrace.Span, tx *varnishTransaction) {
 	}
 }
 
-// setCustomSpanAttrs sets custom OTel attributes from VCL_Log messages.
-// The request and response HTTP header mappings take precedence over custom attributes.
-// Key value pairs are expected to be in the form of "key=value" and will be split at the first '='
-// Example messages:
-// - OTEL_Attribute: http.request.header.x_real_ip=127.0.0.1
-// - OTEL_Attribute: varnish.custom_attribute=custom_value=test -> will set the attribute "varnish.custom_attribute" with value "custom_value=test"
 func setCustomSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	for _, logMsg := range tx.Logs {
 		if strings.HasPrefix(logMsg, vclLogOtelPrefix) {
