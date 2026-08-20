@@ -30,6 +30,7 @@ sub vcl_recv {
         # Regex extracts the 32-char Trace ID from "00-{TraceID}-{SpanID}-{Flags}"
         set req.http.X-Base-Trace-ID = regsub(req.http.traceparent, "^00-([a-f0-9]{32})-([a-f0-9]{16})-[a-f0-9]{2}$", "\1");
     }
+    std.log("OTEL_Attribute: varnish.custom_attr=custom_value");
 }
 
 sub vcl_backend_fetch {

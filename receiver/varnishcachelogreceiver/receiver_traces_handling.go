@@ -16,6 +16,9 @@ import (
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/spanname"
 )
 
+// vclLogOtelPrefix can be used in VCL_Log messages to set custom OTEL attributes (see setCustomSpanAttrs(...))
+const vclLogOtelPrefix = "OTEL_Attribute:"
+
 // splitPayload returns the space-separated fields of rec.Payload.
 // It returns an "invalid tag" error when the field count is outside [min, max].
 // Pass max = -1 to skip the upper bound check. Pass min = 0 to skip the lower bound.
@@ -664,10 +667,24 @@ func setSpanTimestamps(span ptrace.Span, tx *varnishTransaction) {
 	}
 }
 
+func setCustomSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
+	for _, logMsg := range tx.Logs {
+		if strings.HasPrefix(logMsg, vclLogOtelPrefix) {
+			key, value, found := strings.Cut(logMsg[len(vclLogOtelPrefix):], "=")
+			otelAttr := strings.TrimSpace(key)
+			otelVal := strings.TrimSpace(value)
+			if found && otelAttr != "" && otelVal != "" {
+				span.Attributes().PutStr(otelAttr, otelVal)
+			}
+		}
+	}
+}
+
 func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
 	if tx.Resp.Status >= 400 && tx.Resp.Status <= 599 {
 		span.Status().SetCode(ptrace.StatusCodeError)
 	}
+	setCustomSpanAttrs(span, tx)
 	setHeaderSpanAttrs(span, tx, opts)
 	setVarnishSpanAttrs(span, tx)
 	setBackendSpanAttrs(span, tx)
