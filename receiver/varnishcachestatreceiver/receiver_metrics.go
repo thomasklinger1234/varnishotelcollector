@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachestatreceiver/internal/metadata"
-	"gitlab.com/iglou.eu/goulc/wildcard"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
@@ -77,6 +76,8 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 	vsc, err := varnishstats.New().
 		SetTimeout(v.cfg.Timeout).
 		SetName(v.cfg.WorkingDirectory).
+		SetFieldExcludes(v.cfg.ExcludeTags...).
+		SetFieldIncludes(v.cfg.IncludeTags...).
 		Attach()
 	if err != nil {
 		return metrics, fmt.Errorf("failed to attach to vsc: %w", err)
@@ -96,28 +97,6 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 	}
 
 	for cName, cVal := range vsc.Stats {
-		// TODO(thomasklinger1234): Workaround for https://github.com/varnish/varnish-go/issues/30 (lack of -X/-I support).
-		// 							We try to simulate it here with best effort using a wildcard package. Exclusion has priority over inclusion.
-		isIncluded := true
-
-		for _, x := range v.cfg.ExcludeTags {
-			if wildcard.Match(x, cName) {
-				isIncluded = false
-				break
-			}
-		}
-
-		for _, i := range v.cfg.IncludeTags {
-			if !wildcard.Match(i, cName) && !isIncluded {
-				isIncluded = false
-				break
-			}
-		}
-
-		if !isIncluded {
-			continue
-		}
-
 		stats.Counters[cName] = varnishstatCounter{
 			Description: cVal.SDesc,
 			Flags:       cVal.Flags.String(),

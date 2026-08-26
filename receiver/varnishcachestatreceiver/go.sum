@@ -53,8 +53,6 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/varnish/varnish-go v0.2.0 h1:SeNPg9mwRRcNr75NwKZCLLoLfdOmfUSxohL6W4hb41Q=
 github.com/varnish/varnish-go v0.2.0/go.mod h1:pOtL08gnbm9cnDPjIcmBXcBOF8Xgl8rD651Upk3bwyI=
-gitlab.com/iglou.eu/goulc v0.0.0-20260726004911-7a091ecbecef h1:L17pyLsXL+5XIXOuIj4NF9s7FLz5FXZE0iFxt9JUx4I=
-gitlab.com/iglou.eu/goulc v0.0.0-20260726004911-7a091ecbecef/go.mod h1:g+ILjOciAwbvyCiBQEnfBmojn2mn83Rrf1wgMAtwb4c=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/collector/component v1.64.0 h1:c8663Y++GIsnRDn4itl2q1i7aGgCXrIdTWUUHNe78Ow=
