@@ -179,6 +179,8 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 				continue
 			}
 			parentSpanID = pSpanID
+		} else if upstreamPSID := vtx.upstreamSpanID(); !upstreamPSID.IsEmpty() && upstreamPSID != spanID {
+			parentSpanID = upstreamPSID
 		}
 
 		span := scopeSpans.Spans().AppendEmpty()
@@ -198,7 +200,7 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 		}
 		span.SetTraceID(txTraceID)
 		span.SetSpanID(spanID)
-		if !isRoot {
+		if !parentSpanID.IsEmpty() {
 			span.SetParentSpanID(parentSpanID)
 		}
 	}
@@ -329,6 +331,10 @@ func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varn
 		Side:   tx.Type.String(),
 		Reason: tx.Reason.String(),
 	}
+	// seenVCLCall flips at the first VCL_call record and freezes upstream
+	// detection: any traceparent ReqHeader recorded after that point was
+	// set by VCL (`set req.http.traceparent = ...`), not by the client.
+	var seenVCLCall bool
 	for _, txRec := range tx.Records {
 		if txRec.IsClient {
 			vtx.Side = "client"
@@ -336,6 +342,20 @@ func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varn
 			vtx.Side = "backend"
 		} else {
 			vtx.Side = "unknown"
+		}
+		if !seenVCLCall {
+			switch txRec.Tag {
+			case varnishlog.TagVCLCall:
+				seenVCLCall = true
+			case varnishlog.TagReqHeader, varnishlog.TagBereqHeader:
+				if vtx.tpUpstreamSID.IsEmpty() {
+					if name, val, err := parseHeader(txRec.Data); err == nil && name == requiredTraceparentHeader {
+						if _, sid, _, err := extractTraceparent(val); err == nil {
+							vtx.tpUpstreamSID = sid
+						}
+					}
+				}
+			}
 		}
 		if trans, ok := transformFuncs[txRec.Tag.String()]; ok {
 			if err := trans(vtx, txRec); err != nil {
