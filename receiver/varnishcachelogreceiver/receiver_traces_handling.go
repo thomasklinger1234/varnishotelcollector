@@ -648,7 +648,7 @@ func setSpanName(span ptrace.Span, tx *varnishTransaction) {
 		}
 	}
 	if tx.Side == "backend" {
-		span.SetName(fmt.Sprintf("handle %s to %s", tx.Handling, tx.Backend.Name))
+		span.SetName(fmt.Sprintf("%s to backend", tx.Handling))
 	}
 }
 
