@@ -357,6 +357,7 @@ func transformVCLCall(tx *varnishTransaction, rec varnishlog.Record) error {
 		return err
 	}
 	h := parts[0]
+	// todo: move magic strings to constants
 	switch h {
 	case "MISS":
 		tx.Handling = "miss"
@@ -688,7 +689,7 @@ func setCustomSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 }
 
 func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
-	if tx.Resp.Status >= 400 && tx.Resp.Status <= 599 {
+	if tx.Handling == "fetch_error" {
 		span.Status().SetCode(ptrace.StatusCodeError)
 	}
 	setCustomSpanAttrs(span, tx)
