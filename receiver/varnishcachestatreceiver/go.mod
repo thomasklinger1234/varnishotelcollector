@@ -4,8 +4,7 @@ go 1.26
 
 require (
 	github.com/stretchr/testify v1.11.1
-	github.com/varnish/varnish-go v0.1.2
-	gitlab.com/iglou.eu/goulc v0.0.0-20260726004911-7a091ecbecef
+	github.com/varnish/varnish-go v0.2.0
 	go.opentelemetry.io/collector/component v1.64.0
 	go.opentelemetry.io/collector/component/componenttest v0.158.0
 	go.opentelemetry.io/collector/confmap v1.62.0
