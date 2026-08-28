@@ -29,6 +29,15 @@ sub vcl_recv {
         # 2. If it already exists, unpack the Trace ID so we can reuse it in backend fetch
         # Regex extracts the 32-char Trace ID from "00-{TraceID}-{SpanID}-{Flags}"
         set req.http.X-Base-Trace-ID = regsub(req.http.traceparent, "^00-([a-f0-9]{32})-([a-f0-9]{16})-[a-f0-9]{2}$", "\1");
+
+        # 3. Always mint a fresh Span ID for this hop at every esi_level,
+        # including 0. The inbound span-id belongs to the CALLER (an upstream
+        # Varnish, a gateway, or RUM) and is this transaction's PARENT.
+        set req.http.X-Span-Seed = req.http.X-Base-Trace-ID + "_" + now + "_" + std.random(1, 1000000) + "_recv";
+        set req.http.X-Span-ID = regsub(digest.hash_sha256(req.http.X-Span-Seed), "^(.{16}).*$", "\1");
+        set req.http.traceparent = "00-" + req.http.X-Base-Trace-ID + "-" + req.http.X-Span-ID + "-01";
+        unset req.http.X-Span-Seed;
+        unset req.http.X-Span-ID;
     }
     std.log("OTEL_Attribute: varnish.custom_attr=custom_value");
 }
