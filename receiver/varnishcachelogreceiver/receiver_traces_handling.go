@@ -106,15 +106,16 @@ type varnishTransaction struct {
 	Type  string
 	Level uint64
 
-	// todo: re-evaluate this
+	// todo(Aljoscha): re-evaluate this
 	// traceparent parse cache. Set once by extractTraceContext;
 	// buildTraces hits this path repeatedly for the same tx (self
 	// context + parent lookups).
-	tpParsed bool
-	tpOK     bool
-	tpTID    pcommon.TraceID
-	tpSID    pcommon.SpanID
-	tpFlags  byte
+	tpParsed      bool
+	tpOK          bool
+	tpTID         pcommon.TraceID
+	tpSID         pcommon.SpanID
+	tpFlags       byte
+	tpUpstreamSID pcommon.SpanID
 }
 
 func (tx *varnishTransaction) traceparent() string {
@@ -122,6 +123,12 @@ func (tx *varnishTransaction) traceparent() string {
 		return v
 	}
 	return ""
+}
+
+// upstreamSpanID returns the span-id parsed from the client-sent
+// traceparent header, if any, and is used as parent_id on the root span of this request.
+func (tx *varnishTransaction) upstreamSpanID() pcommon.SpanID {
+	return tx.tpUpstreamSID
 }
 
 // varnishTransactionCacheHit mirrors the fields of the VSL `Hit` record

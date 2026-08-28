@@ -910,3 +910,109 @@ func Test_buildHeaderMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildTraces_UpstreamTraceparent_SetsRxreqParent(t *testing.T) {
+	const (
+		rxreqVXID uint64 = 200
+
+		traceIDHex          = "cccccccccccccccccccccccccccccccc"
+		clientOrigSpanIDHex = "aaaaaaaaaaaaaaaa"
+		vclRewriteSpanIDHex = "bbbbbbbbbbbbbbbb"
+	)
+	clientTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, clientOrigSpanIDHex)
+	vclTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, vclRewriteSpanIDHex)
+
+	rcv := newTestReceiver(t)
+
+	txGrp := []varnishlog.Transaction{{
+		Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+		VXID: int64(rxreqVXID), ParentVXID: 0,
+		Records: []varnishlog.Record{
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", clientTP),
+			vclCallRecord(t, rxreqVXID, "RECV"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", vclTP),
+			vclCallRecord(t, rxreqVXID, "HASH"),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
+		},
+	}}
+
+	traces := rcv.buildTraces(txGrp)
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	require.Equal(t, 1, spans.Len())
+	rxreq := spans.At(0)
+
+	assert.Equal(t, hexTraceID(t, traceIDHex), rxreq.TraceID(),
+		"trace-id must come from the traceparent (both records agree)")
+	assert.Equal(t, hexSpanID(t, vclRewriteSpanIDHex), rxreq.SpanID(),
+		"rxreq's own span-id comes from the VCL-rewritten traceparent (used for bereq linkage)")
+	assert.Equal(t, hexSpanID(t, clientOrigSpanIDHex), rxreq.ParentSpanID(),
+		"rxreq's parent-span-id must be the CLIENT-original span-id — rxreq is a child of upstream, not a new root")
+}
+
+func TestBuildTraces_VCLGeneratedTraceparent_NoRxreqParent(t *testing.T) {
+	const (
+		rxreqVXID uint64 = 201
+
+		traceIDHex   = "dddddddddddddddddddddddddddddddd"
+		vclSpanIDHex = "eeeeeeeeeeeeeeee"
+	)
+	vclTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, vclSpanIDHex)
+
+	rcv := newTestReceiver(t)
+
+	txGrp := []varnishlog.Transaction{{
+		Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+		VXID: int64(rxreqVXID), ParentVXID: 0,
+		Records: []varnishlog.Record{
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			vclCallRecord(t, rxreqVXID, "RECV"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", vclTP),
+			vclCallRecord(t, rxreqVXID, "HASH"),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
+		},
+	}}
+
+	traces := rcv.buildTraces(txGrp)
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	require.Equal(t, 1, spans.Len())
+	rxreq := spans.At(0)
+
+	assert.Equal(t, hexTraceID(t, traceIDHex), rxreq.TraceID())
+	assert.Equal(t, hexSpanID(t, vclSpanIDHex), rxreq.SpanID())
+	assert.Equal(t, pcommon.NewSpanIDEmpty(), rxreq.ParentSpanID(),
+		"no client-sent traceparent - rxreq must remain a top-level root")
+}
+
+func TestBuildTraces_MalformedUpstreamTraceparent_NoRxreqParent(t *testing.T) {
+	const (
+		rxreqVXID uint64 = 202
+
+		traceIDHex   = "ffffffffffffffffffffffffffffffff"
+		vclSpanIDHex = "1212121212121212"
+	)
+	vclTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, vclSpanIDHex)
+
+	rcv := newTestReceiver(t)
+
+	txGrp := []varnishlog.Transaction{{
+		Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
+		VXID: int64(rxreqVXID), ParentVXID: 0,
+		Records: []varnishlog.Record{
+			beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", "garbage-not-a-tp"),
+			vclCallRecord(t, rxreqVXID, "RECV"),
+			reqHeaderRecord(t, rxreqVXID, "traceparent", vclTP),
+			vclCallRecord(t, rxreqVXID, "DELIVER"),
+		},
+	}}
+
+	traces := rcv.buildTraces(txGrp)
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	require.Equal(t, 1, spans.Len())
+	rxreq := spans.At(0)
+
+	assert.Equal(t, hexSpanID(t, vclSpanIDHex), rxreq.SpanID())
+	assert.Equal(t, pcommon.NewSpanIDEmpty(), rxreq.ParentSpanID(),
+		"malformed client-sent traceparent must not surface as parent-span-id")
+}
