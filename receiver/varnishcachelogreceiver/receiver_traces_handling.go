@@ -611,17 +611,17 @@ func setBackendSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 }
 
 func setRequestSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
-	if tx.Req.URL != "" {
-		span.Attributes().PutStr(string(semconv.URLPathKey), tx.Req.URL)
-	}
-	if tx.Req.Method != "" {
-		span.Attributes().PutStr(string(semconv.HTTPRequestMethodKey), tx.Req.Method)
-	}
 	if tx.Req.Proto != "" {
 		span.Attributes().PutStr(string(semconv.NetworkProtocolNameKey), tx.Req.Proto)
 	}
 	if tx.Req.ProtoVersion != "" {
 		span.Attributes().PutStr(string(semconv.NetworkProtocolVersionKey), tx.Req.ProtoVersion)
+	}
+	if tx.Req.URL != "" {
+		span.Attributes().PutStr(string(semconv.URLPathKey), tx.Req.URL)
+	}
+	if tx.Req.Method != "" {
+		span.Attributes().PutStr(string(semconv.HTTPRequestMethodKey), tx.Req.Method)
 	}
 	if tx.Req.HdrBytes > 0 || tx.Req.BodyBytes > 0 {
 		span.Attributes().PutInt(string(semconv.HTTPRequestSizeKey), int64(tx.Req.HdrBytes+tx.Req.BodyBytes))
