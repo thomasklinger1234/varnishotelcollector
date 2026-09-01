@@ -12,8 +12,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
-
-	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/spanname"
 )
 
 // vclLogOtelPrefix can be used in VCL_Log messages to set custom OTEL attributes (see setCustomSpanAttrs(...))
@@ -573,7 +571,6 @@ func setVarnishSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Handling != "" {
 		span.Attributes().PutStr("varnish.handling", tx.Handling)
 	}
-	setCacheHitSpanAttrs(span, tx)
 	if len(tx.Resp.Filters) > 0 {
 		span.Attributes().PutStr("varnish.filters", strings.Join(tx.Resp.Filters, " "))
 	}
@@ -645,18 +642,16 @@ func setResponseSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 
 func setSpanName(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Side == "client" {
-		route := spanname.Normalize(tx.Req.URL)
-		if route != "/" && route != spanname.InvalidURLPlaceholder {
-			span.Attributes().PutStr(string(semconv.HTTPRouteKey), route)
-		}
-		if tx.Reason == "esi" {
-			span.SetName(fmt.Sprintf("ESI %s %s %s", tx.Req.Method, route, tx.Type))
-		} else {
-			span.SetName(fmt.Sprintf("%s %s %s", tx.Req.Method, route, tx.Type))
-		}
+		span.SetName(fmt.Sprintf("Varnish request processing"))
 	}
 	if tx.Side == "backend" {
-		span.SetName(fmt.Sprintf("%s to backend", tx.Handling))
+		span.SetName(fmt.Sprintf("Varnish to %s %s", tx.Backend.Name, tx.Handling))
+	}
+}
+
+func setSpanCode(span ptrace.Span, tx *varnishTransaction) {
+	if tx.Handling == "fetch_error" {
+		span.Status().SetCode(ptrace.StatusCodeError)
 	}
 }
 
@@ -689,15 +684,15 @@ func setCustomSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 }
 
 func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
-	if tx.Handling == "fetch_error" {
-		span.Status().SetCode(ptrace.StatusCodeError)
-	}
 	setCustomSpanAttrs(span, tx)
 	setHeaderSpanAttrs(span, tx, opts)
 	setVarnishSpanAttrs(span, tx)
 	setBackendSpanAttrs(span, tx)
+	setCacheHitSpanAttrs(span, tx)
 	setRequestSpanAttrs(span, tx)
 	setResponseSpanAttrs(span, tx)
-	setSpanName(span, tx)
 	setSpanTimestamps(span, tx)
+
+	setSpanName(span, tx)
+	setSpanCode(span, tx)
 }
