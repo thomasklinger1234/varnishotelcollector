@@ -612,7 +612,7 @@ func setBackendSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 
 func setRequestSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Req.URL != "" {
-		span.Attributes().PutStr(string(semconv.URLFullKey), tx.Req.URL)
+		span.Attributes().PutStr(string(semconv.URLPathKey), tx.Req.URL)
 	}
 	if tx.Req.Method != "" {
 		span.Attributes().PutStr(string(semconv.HTTPRequestMethodKey), tx.Req.Method)
