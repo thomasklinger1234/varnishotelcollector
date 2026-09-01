@@ -651,7 +651,7 @@ func setResponseSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 
 func setSpanName(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Side == "client" {
-		span.SetName(fmt.Sprintf("Varnish request processing"))
+		span.SetName(tx.Req.Method)
 	}
 	if tx.Side == "backend" {
 		span.SetName(fmt.Sprintf("Varnish to %s %s", tx.Backend.Name, tx.Handling))
