@@ -2,11 +2,9 @@ package varnishcachelogreceiver
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -19,7 +17,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 var _ receiver.Traces = &varnishcachelogTraceReceiver{}
@@ -119,9 +116,6 @@ func (v *varnishcachelogTraceReceiver) Shutdown(_ context.Context) error {
 }
 
 func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transaction) ptrace.Traces {
-	if v.set.Logger.Level() == zapcore.DebugLevel {
-		v.logTxGroupDebug(txGrp)
-	}
 	vtxs, idxByVXID := v.buildVtxs(txGrp)
 	traceRootVXID := computeTraceRoots(txGrp, vtxs, idxByVXID)
 	traceIDByRoot := assignTraceIDs(txGrp, vtxs, traceRootVXID)
@@ -209,41 +203,6 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 		return ptrace.NewTraces()
 	}
 	return traces
-}
-
-func (v *varnishcachelogTraceReceiver) logTxGroupDebug(txGrp []varnishlog.Transaction) {
-	ce := v.set.Logger.Check(zap.DebugLevel, "buildTraces")
-	if ce == nil {
-		return
-	}
-	vxids := make([]int64, len(txGrp))
-	parents := make([]int64, len(txGrp))
-	types := make([]string, len(txGrp))
-	reasons := make([]string, len(txGrp))
-	beginPayloads := make([]string, len(txGrp))
-	beginPayloadHex := make([]string, len(txGrp))
-	for i, tx := range txGrp {
-		vxids[i] = tx.VXID
-		parents[i] = tx.ParentVXID
-		types[i] = tx.Type.String()
-		reasons[i] = tx.Reason.String()
-		for _, r := range tx.Records {
-			if r.Tag.String() == "Begin" {
-				beginPayloads[i] = strconv.Quote(r.Data)
-				beginPayloadHex[i] = hex.EncodeToString([]byte(r.Data))
-				break
-			}
-		}
-	}
-	ce.Write(
-		zap.Int("txGrp.len", len(txGrp)),
-		zap.Int64s("vxids", vxids),
-		zap.Int64s("parents", parents),
-		zap.Strings("types", types),
-		zap.Strings("reasons", reasons),
-		zap.Strings("beginPayloads", beginPayloads),
-		zap.Strings("beginPayloadHex", beginPayloadHex),
-	)
 }
 
 func (v *varnishcachelogTraceReceiver) buildVtxs(txGrp []varnishlog.Transaction) ([]*varnishTransaction, map[int64]int) {
