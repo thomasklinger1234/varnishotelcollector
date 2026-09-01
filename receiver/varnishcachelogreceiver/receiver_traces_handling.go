@@ -545,6 +545,15 @@ func setHeaderSpanAttrs(span ptrace.Span, tx *varnishTransaction, opts spanOpts)
 			span.Attributes().PutStr(h.OtelAttrKey, v)
 		}
 	}
+
+	for hdrName, hdrVal := range tx.Req.Headers {
+		switch hdrName {
+		case "user-agent":
+			span.Attributes().PutStr(string(semconv.UserAgentNameKey), hdrVal)
+		case "host":
+			span.Attributes().PutStr(string(semconv.HostNameKey), hdrVal)
+		}
+	}
 }
 
 func setVarnishSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
