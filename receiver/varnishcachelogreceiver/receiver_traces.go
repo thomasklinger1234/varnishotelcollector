@@ -10,12 +10,14 @@ import (
 
 	"github.com/thomasklinger1234/varnishotelcollector/receiver/varnishcachelogreceiver/internal/metadata"
 	varnishlog "github.com/varnish/varnish-go/log"
+	varnishversion "github.com/varnish/varnish-go/version"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componentstatus"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/receiver"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.uber.org/zap"
 )
 
@@ -123,8 +125,11 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 	traces := ptrace.NewTraces()
 	resourceSpans := traces.ResourceSpans().AppendEmpty()
 	v.set.Resource.CopyTo(resourceSpans.Resource())
+	resourceSpans.Resource().Attributes().PutStr(string(semconv.ServiceNameKey), "varnish")
+	resourceSpans.Resource().Attributes().PutStr(string(semconv.ServiceVersionKey), varnishversion.Version())
 	scopeSpans := resourceSpans.ScopeSpans().AppendEmpty()
 	scopeSpans.Scope().SetName(metadata.ScopeName)
+	scopeSpans.Scope().SetVersion(varnishversion.Version())
 
 	for i, tx := range txGrp {
 		if traceRootVXID[i] == 0 {
