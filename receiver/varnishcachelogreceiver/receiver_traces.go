@@ -191,6 +191,7 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 		}
 		span.Attributes().PutStr("varnish.tx.type", vtx.Type)
 		span.Attributes().PutStr("varnish.tx.reason", vtx.Reason)
+		span.Attributes().PutInt("varnish.tx.level", int64(vtx.Level))
 		span.Status().SetCode(ptrace.StatusCodeOk)
 
 		updateSpan(span, vtx, v.spanOpts)
