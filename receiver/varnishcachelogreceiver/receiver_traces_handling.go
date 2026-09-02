@@ -570,12 +570,6 @@ func setVarnishSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	}
 	if tx.Side != "" {
 		span.Attributes().PutStr("varnish.side", tx.Side)
-		switch tx.Side {
-		case "client":
-			span.SetKind(ptrace.SpanKindServer)
-		case "backend":
-			span.SetKind(ptrace.SpanKindClient)
-		}
 	}
 	if tx.Handling != "" {
 		span.Attributes().PutStr("varnish.handling", tx.Handling)
@@ -649,12 +643,17 @@ func setResponseSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	}
 }
 
-func setSpanName(span ptrace.Span, tx *varnishTransaction) {
-	if tx.Side == "client" {
-		span.SetName(tx.Req.Method)
-	}
-	if tx.Side == "backend" {
-		span.SetName(fmt.Sprintf("%s %s", tx.Type, tx.Handling))
+func setSpanMeta(span ptrace.Span, tx *varnishTransaction) {
+	switch tx.Reason {
+	case "esi":
+		span.SetName(fmt.Sprintf("ESI %s", tx.Req.Method))
+		span.SetKind(ptrace.SpanKindInternal)
+	case "rxreq":
+		span.SetName(fmt.Sprintf("HTTP %s", tx.Req.Method))
+		span.SetKind(ptrace.SpanKindServer)
+	default:
+		span.SetName(fmt.Sprintf("%s %s", tx.Type, tx.Reason))
+		span.SetKind(ptrace.SpanKindClient)
 	}
 }
 
@@ -702,6 +701,6 @@ func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
 	setResponseSpanAttrs(span, tx)
 	setSpanTimestamps(span, tx)
 
-	setSpanName(span, tx)
+	setSpanMeta(span, tx)
 	setSpanCode(span, tx)
 }
