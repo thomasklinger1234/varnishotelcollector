@@ -684,7 +684,6 @@ func setCustomSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 }
 
 func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
-	setCustomSpanAttrs(span, tx)
 	setHeaderSpanAttrs(span, tx, opts)
 	setVarnishSpanAttrs(span, tx)
 	setBackendSpanAttrs(span, tx)
@@ -692,6 +691,7 @@ func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
 	setRequestSpanAttrs(span, tx)
 	setResponseSpanAttrs(span, tx)
 	setSpanTimestamps(span, tx)
+	setCustomSpanAttrs(span, tx)
 
 	setSpanMeta(span, tx)
 	setSpanCode(span, tx)
