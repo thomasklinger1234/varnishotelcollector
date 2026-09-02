@@ -3,7 +3,6 @@ package varnishcachelogreceiver
 import (
 	"encoding/hex"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -249,12 +248,14 @@ func transformTimestamp(tx *varnishTransaction, rec varnishlog.Record) error {
 	if err != nil {
 		return err
 	}
+
 	tsRaw, err := strconv.ParseFloat(parts[1], 64)
 	if err != nil {
-		return fmt.Errorf("invalid timestamp number: %s. %s", parts[1], err)
+		return fmt.Errorf("Invalid timestamp received: %s", rec.Data)
 	}
-	tsSec, tsFrac := math.Modf(tsRaw)
-	ts := time.Unix(int64(tsSec), int64(tsFrac*1e9))
+	tsSecs := int64(tsRaw)
+	tsNanos := int64((tsRaw - float64(tsSecs)) * 1e9)
+	ts := time.Unix(tsSecs, tsNanos).UTC()
 	name := strings.Replace(parts[0], ":", "", 1)
 	tx.Events = append(tx.Events, varnishTransactionEvent{
 		Timestamp: ts,
