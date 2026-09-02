@@ -341,15 +341,6 @@ func transformAnyAcct(tx *varnishTransaction, rec varnishlog.Record) error {
 	return nil
 }
 
-func transformVCLReturn(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts, err := splitPayload(rec, 1, 1)
-	if err != nil {
-		return err
-	}
-	tx.Handling = parts[0]
-	return nil
-}
-
 func transformVCLCall(tx *varnishTransaction, rec varnishlog.Record) error {
 	parts, err := splitPayload(rec, 1, 1)
 	if err != nil {
