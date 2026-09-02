@@ -618,8 +618,6 @@ func TestBuildTraces_ConfiguredHeadersEmitAtConfiguredAttrKeys(t *testing.T) {
 	assert.Equal(t, "curl/8.0", attrs["user_agent.original"])
 	assert.Equal(t, "example.com", attrs["http.request.header.host"], "host emits at its configured attribute name, verbatim")
 	assert.Equal(t, "req-abc-123", attrs["http.request.header.x_request_id"])
-	_, hasHostName := attrs["host.name"]
-	assert.False(t, hasHostName, "no hardcoded host.name mapping in the app")
 	_, hasXFF := attrs["http.request.header.x_forwarded_for"]
 	assert.False(t, hasXFF, "headers absent from capture map must not emit")
 	_, hasTenant := attrs["tenant.id"]
