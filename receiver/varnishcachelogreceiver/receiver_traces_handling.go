@@ -618,6 +618,9 @@ func setRequestSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Req.HdrBytes > 0 || tx.Req.BodyBytes > 0 {
 		span.Attributes().PutInt(string(semconv.HTTPRequestSizeKey), int64(tx.Req.HdrBytes+tx.Req.BodyBytes))
 	}
+	if host, ok := tx.Req.Headers["host"]; ok {
+		span.Attributes().PutStr(string(semconv.ServerAddressKey), host)
+	}
 }
 
 func setResponseSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
