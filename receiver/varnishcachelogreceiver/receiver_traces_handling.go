@@ -675,7 +675,7 @@ func setSpanMeta(span ptrace.Span, tx *varnishTransaction) {
 		span.SetName(fmt.Sprintf("HTTP %s", tx.Req.Method))
 		span.SetKind(ptrace.SpanKindServer)
 	default:
-		span.SetName(fmt.Sprintf("%s %s", tx.Type, tx.Reason))
+		span.SetName(fmt.Sprintf("%s %s", tx.Side, tx.Reason))
 		span.SetKind(ptrace.SpanKindClient)
 	}
 }
