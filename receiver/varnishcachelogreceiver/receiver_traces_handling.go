@@ -157,6 +157,12 @@ func transformReqURL(tx *varnishTransaction, rec varnishlog.Record) error {
 	if len(parts) == 0 {
 		return nil
 	}
+
+	// for client requests: record what the client sees aka "first ReqURL wins"
+	// for backend requests: record what the backend sees aka "last ReqURL wins"
+	if tx.Side == "client" && tx.Req.URL != "" {
+		return nil
+	}
 	tx.Req.URL = parts[0]
 	return nil
 }
