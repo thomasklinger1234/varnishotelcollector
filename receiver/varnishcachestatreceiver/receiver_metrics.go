@@ -136,13 +136,13 @@ func (v *varnishcachestatScraper) scrape(ctx context.Context) (pmetric.Metrics, 
 
 		resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
 		resource := resourceMetrics.Resource()
+		resource.Attributes().PutStr("varnish.version", varnishversion.Version())
+		resource.Attributes().PutStr("varnish.revision", varnishversion.Commit())
 
 		scopeMetrics := resourceMetrics.ScopeMetrics().AppendEmpty()
 		scope := scopeMetrics.Scope()
 		scope.SetName(metadata.ScopeName)
 		scope.SetVersion(v.set.BuildInfo.Version)
-		scope.Attributes().PutStr("varnish.version", varnishversion.Version())
-		scope.Attributes().PutStr("varnish.revision", varnishversion.Commit())
 
 		metric := scopeMetrics.Metrics().AppendEmpty()
 		metric.SetName(name)
