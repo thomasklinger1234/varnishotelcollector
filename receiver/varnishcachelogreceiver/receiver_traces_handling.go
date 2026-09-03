@@ -167,6 +167,24 @@ func transformReqURL(tx *varnishTransaction, rec varnishlog.Record) error {
 	return nil
 }
 
+func transformReqUnset(tx *varnishTransaction, rec varnishlog.Record) error {
+	hdrName, _, err := parseHeader(rec.Data)
+	if err != nil {
+		return fmt.Errorf("could not parse ReqUnset header: %s", err)
+	}
+	delete(tx.Req.Headers, hdrName)
+	return nil
+}
+
+func transformRespUnset(tx *varnishTransaction, rec varnishlog.Record) error {
+	hdrName, _, err := parseHeader(rec.Data)
+	if err != nil {
+		return fmt.Errorf("could not parse RespUnset header: %s", err)
+	}
+	delete(tx.Resp.Headers, hdrName)
+	return nil
+}
+
 func transformReqMethod(tx *varnishTransaction, rec varnishlog.Record) error {
 	parts := strings.Fields(rec.Data)
 	if len(parts) == 0 {
@@ -471,7 +489,11 @@ var (
 		varnishlog.TagVCLError.String():      transformAnyError,
 		varnishlog.TagReqURL.String():        transformReqURL,
 		varnishlog.TagBereqURL.String():      transformReqURL,
+		varnishlog.TagReqUnset.String():      transformReqUnset,
+		varnishlog.TagBereqUnset.String():    transformReqUnset,
 		varnishlog.TagReqMethod.String():     transformReqMethod,
+		varnishlog.TagRespUnset.String():     transformRespUnset,
+		varnishlog.TagBerespUnset.String():   transformRespUnset,
 		varnishlog.TagBereqMethod.String():   transformReqMethod,
 		varnishlog.TagLink.String():          transformLink,
 		varnishlog.TagRespReason.String():    transformRespReason,
