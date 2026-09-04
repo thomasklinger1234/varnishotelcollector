@@ -658,8 +658,9 @@ func setResponseSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	if tx.Resp.ProtoVersion != "" {
 		span.Attributes().PutStr(string(semconv.NetworkProtocolVersionKey), tx.Resp.ProtoVersion)
 	}
-	if tx.Resp.Status > 0 && tx.Resp.Status < 1000 {
-		span.Attributes().PutInt(string(semconv.HTTPResponseStatusCodeKey), int64(tx.Resp.Status))
+	if tx.Resp.Status > 0 {
+		// using HTTP status codes > 1000 is a common practice in the Varnish community (e.g. for vcl_synth).
+		span.Attributes().PutInt(string(semconv.HTTPResponseStatusCodeKey), int64(tx.Resp.Status%1000))
 	}
 	if tx.Resp.HdrBytes > 0 || tx.Resp.BodyBytes > 0 {
 		span.Attributes().PutInt(string(semconv.HTTPResponseSizeKey), int64(tx.Resp.HdrBytes+tx.Resp.BodyBytes))

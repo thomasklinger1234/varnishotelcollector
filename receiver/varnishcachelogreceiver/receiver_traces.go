@@ -147,25 +147,19 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 		txTraceID := traceIDByRoot[traceRootVXID[i]]
 		_, spanID, flags, tpOK := extractTraceContext(vtx)
 		if !tpOK {
-			v.set.Logger.Debug("dropping tx: no traceparent header (synthetic IDs not supported)",
+			v.set.Logger.Warn("dropping tx: no traceparent header (synthetic IDs not supported)",
 				zap.Int64("vxid", tx.VXID),
 				zap.Int64("root_vxid", traceRootVXID[i]),
 			)
 			continue
 		}
 		if txTraceID.IsEmpty() {
-			v.set.Logger.Debug("dropping tx: root has no traceparent (synthetic IDs not supported)",
+			v.set.Logger.Warn("dropping tx: root has no traceparent (synthetic IDs not supported)",
 				zap.Int64("vxid", tx.VXID),
 				zap.Int64("root_vxid", traceRootVXID[i]),
 			)
 			continue
 		}
-		if v.cfg.RespectUpstreamSampling {
-			if flags&0x01 == 0 {
-				continue
-			}
-		}
-
 		var parentSpanID pcommon.SpanID
 		if !isRoot {
 			parentIdx, ok := idxByVXID[tx.ParentVXID]
@@ -207,9 +201,7 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 		}
 		span.SetTraceID(txTraceID)
 		span.SetSpanID(spanID)
-		if !parentSpanID.IsEmpty() {
-			span.SetParentSpanID(parentSpanID)
-		}
+		span.SetParentSpanID(parentSpanID)
 	}
 
 	if scopeSpans.Spans().Len() == 0 {

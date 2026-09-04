@@ -27,14 +27,7 @@ type Config struct {
 	//
 	// Default: {}
 	CaptureResponseHeaders map[string]string `mapstructure:"capture_response_headers"`
-
-	// RespectUpstreamSampling turns the receiver into a head-sampler
-	// that honors the W3C traceparent `sampled` flag (bit 0 of the
-	// flags byte) on each trace's root client request.
-	//
-	// Default: true
-	RespectUpstreamSampling bool `mapstructure:"respect_upstream_sampling"`
-
+	
 	// prevent unkeyed literal initialization
 	_ struct{}
 }

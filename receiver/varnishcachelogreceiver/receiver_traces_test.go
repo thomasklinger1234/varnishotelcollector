@@ -624,17 +624,6 @@ func TestBuildTraces_ConfiguredHeadersEmitAtConfiguredAttrKeys(t *testing.T) {
 	assert.False(t, hasTenant, "configured header not seen in VSL must not emit an empty attribute")
 }
 
-func newTestReceiverRespectSampling(t *testing.T) *varnishcachelogTraceReceiver {
-	t.Helper()
-	cfg := createDefaultConfig().(*Config)
-	cfg.RespectUpstreamSampling = true
-	return &varnishcachelogTraceReceiver{
-		set:      receivertest.NewNopSettings(metadata.Type),
-		cfg:      cfg,
-		spanOpts: buildSpanOpts(cfg),
-	}
-}
-
 // TestBuildTraces_RespectUpstreamSampling_SampledEmits: when the root
 // rxreq's traceparent has flags=01 the whole trace (rxreq + bereq) is
 // emitted. Baseline for the sampling gate — no dropping when upstream
@@ -651,7 +640,7 @@ func TestBuildTraces_RespectUpstreamSampling_SampledEmits(t *testing.T) {
 	rxreqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, rxreqSpanIDHex)
 	bereqTP := fmt.Sprintf("00-%s-%s-01", traceIDHex, bereqSpanIDHex)
 
-	rcv := newTestReceiverRespectSampling(t)
+	rcv := newTestReceiver(t)
 	txGrp := []varnishlog.Transaction{
 		{
 			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
@@ -675,53 +664,13 @@ func TestBuildTraces_RespectUpstreamSampling_SampledEmits(t *testing.T) {
 	require.Equal(t, 2, spans.Len(), "sampled root must emit root + descendant spans")
 }
 
-// TestBuildTraces_RespectUpstreamSampling_UnsampledDropsWholeGroup:
-// when the root's traceparent has flags=00 the whole trace including
-// its bereqs is dropped. Descendants must not leak through even if
-// their own traceparent (also 00 per VCL propagation) is present.
-func TestBuildTraces_RespectUpstreamSampling_UnsampledDropsWholeGroup(t *testing.T) {
-	const (
-		rxreqVXID uint64 = 510
-		bereqVXID uint64 = 511
-
-		traceIDHex     = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-		rxreqSpanIDHex = "3333333333333333"
-		bereqSpanIDHex = "4444444444444444"
-	)
-	rxreqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, rxreqSpanIDHex)
-	bereqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, bereqSpanIDHex)
-
-	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Transaction{
-		{
-			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
-			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
-			Records: []varnishlog.Record{
-				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
-				reqHeaderRecord(t, rxreqVXID, "traceparent", rxreqTP),
-			},
-		},
-		{
-			Type: varnishlog.TypeBackend, Reason: varnishlog.ReasonFetch,
-			Level: 2, VXID: int64(bereqVXID), ParentVXID: int64(rxreqVXID),
-			Records: []varnishlog.Record{
-				beginRecord(t, bereqVXID, "bereq", fmt.Sprintf("%d", rxreqVXID), "fetch"),
-				bereqHeaderRecord(t, bereqVXID, "traceparent", bereqTP),
-			},
-		},
-	}
-	traces := rcv.buildTraces(txGrp)
-	assert.Equal(t, 0, traces.SpanCount(), "unsampled root must drop the whole trace including descendants")
-	assert.Equal(t, 0, traces.ResourceSpans().Len(), "no spans emitted must not produce empty ResourceSpans")
-}
-
 // TestBuildTraces_RespectUpstreamSampling_MissingTraceparentDrops
 // exercises the fail-closed contract: when the flag is on and the
 // root carries no traceparent header at all, the trace is dropped.
 func TestBuildTraces_RespectUpstreamSampling_MissingTraceparentDrops(t *testing.T) {
 	const rxreqVXID uint64 = 520
 
-	rcv := newTestReceiverRespectSampling(t)
+	rcv := newTestReceiver(t)
 	txGrp := []varnishlog.Transaction{
 		{
 			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
@@ -733,100 +682,6 @@ func TestBuildTraces_RespectUpstreamSampling_MissingTraceparentDrops(t *testing.
 	}
 	traces := rcv.buildTraces(txGrp)
 	assert.Equal(t, 0, traces.SpanCount(), "fail-closed: root without traceparent must drop when RespectUpstreamSampling=true")
-}
-
-// TestBuildTraces_RespectUpstreamSampling_MalformedTraceparentDrops:
-// same fail-closed contract when the traceparent is present but
-// cannot be parsed. Prevents a broken upstream from silently opting
-// every request into being emitted.
-func TestBuildTraces_RespectUpstreamSampling_MalformedTraceparentDrops(t *testing.T) {
-	const rxreqVXID uint64 = 530
-
-	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Transaction{
-		{
-			Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
-			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
-			Records: []varnishlog.Record{
-				beginRecord(t, rxreqVXID, "req", "0", "rxreq"),
-				reqHeaderRecord(t, rxreqVXID, "traceparent", "garbage-not-a-tp"),
-			},
-		},
-	}
-	traces := rcv.buildTraces(txGrp)
-	assert.Equal(t, 0, traces.SpanCount(), "fail-closed: malformed traceparent must drop")
-}
-
-// TestBuildTraces_RespectUpstreamSampling_MixedRootsInSession locks
-// in per-trace-root filtering: a Varnish-9 session-rooted txGrp
-// carrying two rxreqs — one sampled, one not — must emit only the
-// sampled rxreq and its bereqs, and drop the unsampled rxreq entirely
-// including its bereqs. Guards against a group-level "all-or-nothing"
-// filter.
-func TestBuildTraces_RespectUpstreamSampling_MixedRootsInSession(t *testing.T) {
-	const (
-		sessVXID   uint64 = 600
-		rxreqAVXID uint64 = 601
-		rxreqBVXID uint64 = 602
-		bereqAVXID uint64 = 603
-		bereqBVXID uint64 = 604
-
-		traceIDA     = "cccccccccccccccccccccccccccccccc"
-		traceIDB     = "dddddddddddddddddddddddddddddddd"
-		spanIDA      = "5555555555555555"
-		spanIDB      = "6666666666666666"
-		bereqSpanIDA = "7777777777777777"
-		bereqSpanIDB = "8888888888888888"
-	)
-	tpA := fmt.Sprintf("00-%s-%s-01", traceIDA, spanIDA)
-	tpB := fmt.Sprintf("00-%s-%s-00", traceIDB, spanIDB)
-	tpAbereq := fmt.Sprintf("00-%s-%s-01", traceIDA, bereqSpanIDA)
-	tpBbereq := fmt.Sprintf("00-%s-%s-00", traceIDB, bereqSpanIDB)
-
-	rcv := newTestReceiverRespectSampling(t)
-	txGrp := []varnishlog.Transaction{
-		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 1, VXID: int64(sessVXID), ParentVXID: 0,
-			Records: []varnishlog.Record{beginRecord(t, sessVXID, "sess", "0", "HTTP/1")}},
-		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: int64(rxreqAVXID), ParentVXID: int64(sessVXID),
-			Records: []varnishlog.Record{
-				beginRecord(t, rxreqAVXID, "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
-				reqHeaderRecord(t, rxreqAVXID, "traceparent", tpA),
-			}},
-		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 2, VXID: int64(rxreqBVXID), ParentVXID: int64(sessVXID),
-			Records: []varnishlog.Record{
-				beginRecord(t, rxreqBVXID, "req", fmt.Sprintf("%d", sessVXID), "rxreq"),
-				reqHeaderRecord(t, rxreqBVXID, "traceparent", tpB),
-			}},
-		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: int64(bereqAVXID), ParentVXID: int64(rxreqAVXID),
-			Records: []varnishlog.Record{
-				beginRecord(t, bereqAVXID, "bereq", fmt.Sprintf("%d", rxreqAVXID), "fetch"),
-				bereqHeaderRecord(t, bereqAVXID, "traceparent", tpAbereq),
-			}},
-		{Type: varnishlog.TypeUnknown, Reason: varnishlog.ReasonUnknown,
-			Level: 3, VXID: int64(bereqBVXID), ParentVXID: int64(rxreqBVXID),
-			Records: []varnishlog.Record{
-				beginRecord(t, bereqBVXID, "bereq", fmt.Sprintf("%d", rxreqBVXID), "fetch"),
-				bereqHeaderRecord(t, bereqBVXID, "traceparent", tpBbereq),
-			}},
-	}
-	traces := rcv.buildTraces(txGrp)
-	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
-	require.Equal(t, 2, spans.Len(), "only trace A (sampled) should be emitted: rxreq A + bereq A")
-
-	seen := make(map[uint64]bool)
-	for i := 0; i < spans.Len(); i++ {
-		v, ok := spans.At(i).Attributes().Get("varnish.vxid")
-		require.True(t, ok)
-		seen[uint64(v.Int())] = true
-	}
-	assert.True(t, seen[rxreqAVXID], "sampled rxreq A must be emitted")
-	assert.True(t, seen[bereqAVXID], "sampled trace A's bereq must be emitted")
-	assert.False(t, seen[rxreqBVXID], "unsampled rxreq B must be dropped")
-	assert.False(t, seen[bereqBVXID], "unsampled trace B's bereq must be dropped")
 }
 
 // TestBuildTraces_RespectUpstreamSampling_DisabledEmitsUnsampled locks
@@ -844,7 +699,6 @@ func TestBuildTraces_RespectUpstreamSampling_DisabledEmitsUnsampled(t *testing.T
 	rxreqTP := fmt.Sprintf("00-%s-%s-00", traceIDHex, rxreqSpanIDHex)
 
 	rcv := newTestReceiver(t)
-	rcv.cfg.RespectUpstreamSampling = false
 	txGrp := []varnishlog.Transaction{
 		{Type: varnishlog.TypeRequest, Reason: varnishlog.ReasonRxReq,
 			Level: 1, VXID: int64(rxreqVXID), ParentVXID: 0,
