@@ -13,6 +13,7 @@ type Config struct {
 	Timeout          time.Duration `mapstructure:"timeout"`
 	WorkingDirectory string        `mapstructure:"working_directory"`
 	VSLQuery         string        `mapstructure:"vsl_query"`
+	VSLBinaryFile    string        `mapstructure:"vsl_binary_file"`
 
 	// CaptureRequestHeaders maps request header names (case-insensitive)
 	// to the OTel span attribute name the value should be emitted under.

@@ -10,7 +10,10 @@ $defs:
         description: VSM timeout
       vsl_query:
         type: string
-        description: VSL query 
+        description: VSL query
+      vsl_binary_file:
+        type: string
+        description: VSL binary file (created with varnishlog -w) to read from.
       capture_request_headers:
         type: object
         additionalProperties:

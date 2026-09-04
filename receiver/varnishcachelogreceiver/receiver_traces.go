@@ -51,6 +51,7 @@ func (v *varnishcachelogTraceReceiver) Start(ctx context.Context, host component
 	vsmReader, err := varnishlog.New().
 		SetGrouping(varnishlog.GroupingRequest).
 		SetName(v.cfg.WorkingDirectory).
+		SetFile(v.cfg.VSLBinaryFile).
 		SetQuery(v.cfg.VSLQuery).
 		SetTimeout(v.cfg.Timeout).
 		SetBacklog(false).
@@ -65,12 +66,18 @@ func (v *varnishcachelogTraceReceiver) Start(ctx context.Context, host component
 		}).
 		Attach()
 	if err != nil {
-		return fmt.Errorf("failed to attach to VSM: %s", err.Error())
+		return fmt.Errorf("failed to attach to VSL: %s", err.Error())
 	}
 
-	v.set.Logger.Info("successfully attached to VSM",
-		zap.String("working_directory", v.cfg.WorkingDirectory),
-		zap.String("vsl_query", v.cfg.VSLQuery))
+	if v.cfg.VSLBinaryFile != "" {
+		v.set.Logger.Info("successfully attached to VSL",
+			zap.String("vsl_binary_file", v.cfg.VSLBinaryFile))
+
+	} else {
+		v.set.Logger.Info("successfully attached to VSL",
+			zap.String("working_directory", v.cfg.WorkingDirectory),
+			zap.String("vsl_query", v.cfg.VSLQuery))
+	}
 
 	ctx, cancel := context.WithCancel(ctx) // varnish-go/log requires a cancelable context
 	v.cancel = cancel
