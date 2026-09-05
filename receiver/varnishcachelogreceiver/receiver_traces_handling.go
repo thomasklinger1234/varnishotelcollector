@@ -206,7 +206,7 @@ func transformVCLUse(tx *varnishTransaction, rec varnishlog.Record) error {
 func transformLink(tx *varnishTransaction, rec varnishlog.Record) error {
 	parts := strings.Fields(rec.Data)
 	if len(parts) < 3 {
-		return fmt.Errorf("Invalid link received: %s", rec.Data)
+		return fmt.Errorf("invalid link received: %s", rec.Data)
 	}
 	id, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
@@ -223,7 +223,7 @@ func transformLink(tx *varnishTransaction, rec varnishlog.Record) error {
 func transformStorage(tx *varnishTransaction, rec varnishlog.Record) error {
 	parts := strings.Fields(rec.Data)
 	if len(parts) != 2 {
-		return fmt.Errorf("Invalid storage received: %s", rec.Data)
+		return fmt.Errorf("invalid storage received: %s", rec.Data)
 	}
 	tx.Storage = &varnishTransactionStorage{
 		Name: parts[0],
@@ -275,7 +275,7 @@ func transformTimestamp(tx *varnishTransaction, rec varnishlog.Record) error {
 
 	tsRaw, err := strconv.ParseFloat(parts[1], 64)
 	if err != nil {
-		return fmt.Errorf("Invalid timestamp received: %s", rec.Data)
+		return fmt.Errorf("invalid timestamp received: %s", rec.Data)
 	}
 	tsSecs := int64(tsRaw)
 	tsNanos := int64((tsRaw - float64(tsSecs)) * 1e9)
@@ -294,7 +294,7 @@ func transformAnyProtocol(rec varnishlog.Record) (string, string, error) {
 	}
 	proto, protoVer, found := strings.Cut(rec.Data, "/")
 	if !found {
-		return "", "", fmt.Errorf("invalid tag: %s", rec.Tag.String())
+		return "", "", fmt.Errorf("invalid protocol tag: %s", rec.Tag.String())
 	}
 	return proto, protoVer, nil
 }
