@@ -195,7 +195,6 @@ func (v *varnishcachelogTraceReceiver) visitVtxLinks(scopeSpans ptrace.ScopeSpan
 
 	for _, link := range vtx.Links {
 		if vtxNext, ok := vtxs[link.VXID]; ok {
-			fmt.Printf("chasing link %d -> %d\n", vtx.VXID, vtxNext.VXID)
 			v.visitVtxLinks(scopeSpans, vtxs, vtxNext, vtx)
 		}
 	}
