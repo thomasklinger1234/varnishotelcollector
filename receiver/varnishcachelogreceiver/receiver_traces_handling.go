@@ -3,6 +3,7 @@ package varnishcachelogreceiver
 import (
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -638,7 +639,11 @@ func setRequestSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 		span.Attributes().PutStr(string(semconv.NetworkProtocolVersionKey), tx.Req.ProtoVersion)
 	}
 	if tx.Req.URL != "" {
-		span.Attributes().PutStr(string(semconv.URLPathKey), tx.Req.URL)
+		if urlParsed, err := url.Parse(tx.Req.URL); err == nil {
+			span.Attributes().PutStr(string(semconv.URLPathKey), urlParsed.RawPath)
+			span.Attributes().PutStr(string(semconv.URLQueryKey), urlParsed.RawQuery)
+		}
+		span.Attributes().PutStr(string(semconv.URLFullKey), tx.Req.URL)
 	}
 	if tx.Req.Method != "" {
 		span.Attributes().PutStr(string(semconv.HTTPRequestMethodKey), tx.Req.Method)
