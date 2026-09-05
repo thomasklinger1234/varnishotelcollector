@@ -627,8 +627,8 @@ func setRequestSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	}
 	if tx.Req.URL != "" {
 		if urlParsed, err := url.Parse(tx.Req.URL); err == nil {
-			span.Attributes().PutStr(string(semconv.URLPathKey), urlParsed.RawPath)
-			span.Attributes().PutStr(string(semconv.URLQueryKey), urlParsed.RawQuery)
+			span.Attributes().PutStr(string(semconv.URLPathKey), urlParsed.EscapedPath())
+			span.Attributes().PutStr(string(semconv.URLQueryKey), urlParsed.Query().Encode())
 		}
 		span.Attributes().PutStr(string(semconv.URLFullKey), tx.Req.URL)
 	}
