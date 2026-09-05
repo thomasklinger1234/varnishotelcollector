@@ -136,6 +136,7 @@ func (tx *varnishTransaction) upstreamSpanID() pcommon.SpanID {
 // be negative when the object is beyond ttl but still within grace — that
 // is the grace-served hit state which typically triggers Varnish's
 // background revalidation fetch.
+// TODO(thomasklinger1234): move struct above varnishTransaction
 type varnishTransactionCacheHit struct {
 	ObjVXID     uint64
 	TTLMillis   int64
@@ -437,28 +438,6 @@ func transformRespHeader(tx *varnishTransaction, rec varnishlog.Record) error {
 	return nil
 }
 
-func transformBegin(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts, err := splitPayload(rec, 3, -1)
-	if err != nil {
-		return err
-	}
-	xid, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return err
-	}
-	if len(parts) > 3 {
-		lvl, err := strconv.ParseUint(parts[3], 10, 64)
-		if err != nil {
-			return err
-		}
-		tx.Level = lvl
-	}
-	tx.VXIDParent = xid
-	tx.Type = parts[0]
-	tx.Reason = parts[2]
-	return nil
-}
-
 func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 	var xid, fetched, clen uint64
 	var ttl, grace, keep float64
@@ -517,7 +496,6 @@ var (
 		varnishlog.TagBerespHeader.String():  transformRespHeader,
 		varnishlog.TagReqHeader.String():     transformReqHeader,
 		varnishlog.TagBereqHeader.String():   transformReqHeader,
-		varnishlog.TagBegin.String():         transformBegin,
 		varnishlog.TagHit.String():           transformHit,
 	}
 )

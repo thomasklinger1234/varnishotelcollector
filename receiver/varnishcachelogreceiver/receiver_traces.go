@@ -125,10 +125,6 @@ func (v *varnishcachelogTraceReceiver) Shutdown(_ context.Context) error {
 }
 
 func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transaction) ptrace.Traces {
-	vtxs, idxByVXID := v.buildVtxs(txGrp)
-	traceRootVXID := computeTraceRoots(txGrp, vtxs, idxByVXID)
-	traceIDByRoot := assignTraceIDs(txGrp, vtxs, traceRootVXID)
-
 	traces := ptrace.NewTraces()
 	resourceSpans := traces.ResourceSpans().AppendEmpty()
 	v.set.Resource.CopyTo(resourceSpans.Resource())
@@ -138,70 +134,29 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 	scopeSpans.Scope().SetName(metadata.ScopeName)
 	scopeSpans.Scope().SetVersion(varnishversion.Version())
 
-	for i, tx := range txGrp {
-		if traceRootVXID[i] == 0 {
-			continue
-		}
-		vtx := vtxs[i]
-		isRoot := tx.VXID == traceRootVXID[i]
-		txTraceID := traceIDByRoot[traceRootVXID[i]]
-		_, spanID, flags, tpOK := extractTraceContext(vtx)
-		if !tpOK {
-			v.set.Logger.Warn("dropping tx: no traceparent header (synthetic IDs not supported)",
-				zap.Int64("vxid", tx.VXID),
-				zap.Int64("root_vxid", traceRootVXID[i]),
-			)
-			continue
-		}
-		if txTraceID.IsEmpty() {
-			v.set.Logger.Warn("dropping tx: root has no traceparent (synthetic IDs not supported)",
-				zap.Int64("vxid", tx.VXID),
-				zap.Int64("root_vxid", traceRootVXID[i]),
-			)
-			continue
-		}
-		var parentSpanID pcommon.SpanID
-		if !isRoot {
-			parentIdx, ok := idxByVXID[tx.ParentVXID]
-			if !ok {
-				v.set.Logger.Warn("dropping tx: parent tx not found in txGrp",
-					zap.Int64("vxid", tx.VXID),
-					zap.Int64("parent_vxid", tx.ParentVXID),
-				)
-				continue
-			}
-			_, pSpanID, _, pOK := extractTraceContext(vtxs[parentIdx])
-			if !pOK {
-				v.set.Logger.Warn("dropping tx: parent tx has no traceparent (parent_span_id unresolvable)",
-					zap.Int64("vxid", tx.VXID),
-					zap.Int64("parent_vxid", tx.ParentVXID),
-				)
-				continue
-			}
-			parentSpanID = pSpanID
-		} else if upstreamPSID := vtx.upstreamSpanID(); !upstreamPSID.IsEmpty() && upstreamPSID != spanID {
-			parentSpanID = upstreamPSID
-		}
+	// build mapping VXID -> TX
+	vtxs := map[int64]*varnishTransaction{}
+	var vtxStart *varnishTransaction
+	for _, tx := range txGrp {
+		vtx := v.buildVtx(tx)
+		// TODO(thomasklinger1234): centralize logic at one point
+		vtx.VXID = tx.VXID
+		vtx.VXIDParent = tx.ParentVXID
+		vtx.Level = uint64(tx.Level)
+		vtx.Reason = tx.Reason.String()
+		vtx.Type = tx.Type.String()
+		vtxs[tx.VXID] = vtx
 
-		span := scopeSpans.Spans().AppendEmpty()
-		if tx.VXID > 0 {
-			span.Attributes().PutInt("varnish.vxid", vtx.VXID)
+		if vtx.VXIDParent == 0 {
+			if vtxStart != nil {
+				v.set.Logger.Warn("found multiple VTXs with VXIDParent=0", zap.Int64("vxid", vtx.VXID))
+			}
+			vtxStart = vtx
 		}
-		if !isRoot {
-			span.Attributes().PutInt("varnish.vxid_parent", vtx.VXIDParent)
-		}
-		span.Attributes().PutStr("varnish.tx.type", vtx.Type)
-		span.Attributes().PutStr("varnish.tx.reason", vtx.Reason)
-		span.Attributes().PutInt("varnish.tx.level", int64(vtx.Level))
-		span.Status().SetCode(ptrace.StatusCodeOk)
+	}
 
-		updateSpan(span, vtx, v.spanOpts)
-		if flags&0x01 == 1 {
-			span.SetFlags(0x01)
-		}
-		span.SetTraceID(txTraceID)
-		span.SetSpanID(spanID)
-		span.SetParentSpanID(parentSpanID)
+	if vtxStart != nil {
+		v.visitVtxLinks(scopeSpans, vtxs, vtxStart, nil)
 	}
 
 	if scopeSpans.Spans().Len() == 0 {
@@ -210,53 +165,40 @@ func (v *varnishcachelogTraceReceiver) buildTraces(txGrp []varnishlog.Transactio
 	return traces
 }
 
-func (v *varnishcachelogTraceReceiver) buildVtxs(txGrp []varnishlog.Transaction) ([]*varnishTransaction, map[int64]int) {
-	vtxs := make([]*varnishTransaction, len(txGrp))
-	idxByVXID := make(map[int64]int, len(txGrp))
-	for i, tx := range txGrp {
-		vtxs[i] = v.buildVtx(tx)
-		idxByVXID[tx.VXID] = i
+// visitVtxLinks is the heart of the correlation logic to transform varnishTransaction objects into a full trace by following
+// the extracted [`Links`] until we reach a leaf transaction (i.e. no further Links).
+func (v *varnishcachelogTraceReceiver) visitVtxLinks(scopeSpans ptrace.ScopeSpans, vtxs map[int64]*varnishTransaction, vtx *varnishTransaction, vtxParent *varnishTransaction) {
+	traceID, spanID, flags, tpOK := extractTraceContext(vtx)
+	if !tpOK {
+		v.set.Logger.Warn("failed to extract trace context", zap.Any("vtx", vtx))
+		return
 	}
-	return vtxs, idxByVXID
-}
 
-// computeTraceRoots walks each tx up its ParentVXID chain until we hit a client rxreq — that
-// rxreq is the trace root.
-func computeTraceRoots(txGrp []varnishlog.Transaction, vtxs []*varnishTransaction, idxByVXID map[int64]int) []int64 {
-	traceRootVXID := make([]int64, len(txGrp))
-	for i := range txGrp {
-		j := i
-		for hop := 0; hop <= len(txGrp); hop++ {
-			if vtxs[j].Type == "req" && vtxs[j].Reason == "rxreq" {
-				traceRootVXID[i] = txGrp[j].VXID
-				break
-			}
-			parent := txGrp[j].ParentVXID
-			if parent == 0 {
-				break
-			}
-			k, ok := idxByVXID[parent]
-			if !ok {
-				break
-			}
-			j = k
-		}
-	}
-	return traceRootVXID
-}
+	span := scopeSpans.Spans().AppendEmpty()
+	span.Attributes().PutInt("varnish.vxid", vtx.VXID)
+	span.Attributes().PutInt("varnish.vxid_parent", vtx.VXIDParent)
+	span.Attributes().PutStr("varnish.tx.type", vtx.Type)
+	span.Attributes().PutStr("varnish.tx.reason", vtx.Reason)
+	span.Attributes().PutInt("varnish.tx.level", int64(vtx.Level))
+	span.Status().SetCode(ptrace.StatusCodeOk)
+	span.SetFlags(uint32(flags))
+	span.SetTraceID(traceID)
+	span.SetSpanID(spanID)
 
-func assignTraceIDs(txGrp []varnishlog.Transaction, vtxs []*varnishTransaction, traceRootVXID []int64) map[int64]pcommon.TraceID {
-	traceIDByRoot := make(map[int64]pcommon.TraceID, len(txGrp))
-	for i, tx := range txGrp {
-		root := traceRootVXID[i]
-		if root == 0 || tx.VXID != root {
-			continue
-		}
-		if tid, _, _, ok := extractTraceContext(vtxs[i]); ok {
-			traceIDByRoot[root] = tid
+	if vtxParent != nil {
+		span.SetParentSpanID(vtxParent.tpSID)
+	} else {
+		span.SetParentSpanID(vtx.tpUpstreamSID)
+	}
+
+	updateSpan(span, vtx, v.spanOpts)
+
+	for _, link := range vtx.Links {
+		if vtxNext, ok := vtxs[link.VXID]; ok {
+			fmt.Printf("chasing link %d -> %d\n", vtx.VXID, vtxNext.VXID)
+			v.visitVtxLinks(scopeSpans, vtxs, vtxNext, vtx)
 		}
 	}
-	return traceIDByRoot
 }
 
 func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.SpanID, byte, bool) {
@@ -281,7 +223,11 @@ func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.Span
 
 func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varnishTransaction {
 	vtx := &varnishTransaction{
-		VXID: tx.VXID,
+		VXID:       tx.VXID,
+		VXIDParent: tx.ParentVXID,
+		Level:      uint64(tx.Level),
+		Type:       tx.Type.String(),
+		Reason:     tx.Reason.String(),
 		Req: varnishTransactionReq{
 			Headers: make(map[string]string),
 		},
@@ -292,13 +238,12 @@ func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varn
 		Errors: make([]string, 0),
 		Logs:   make([]string, 0),
 		Links:  make([]varnishTransactionLink, 0),
-		Side:   tx.Type.String(),
-		Reason: tx.Reason.String(),
 	}
-	// seenVCLCall flips at the first VCL_call record and freezes upstream
-	// detection: any traceparent ReqHeader recorded after that point was
-	// set by VCL (`set req.http.traceparent = ...`), not by the client.
-	var seenVCLCall bool
+	// track if VCL processing has already been started by waiting for the first VCL_Call tag. Before, all records
+	// (ReqHeader in particular) have been set by the client. All traceparent headers found before that, can be considered
+	// upstream.
+	vclProcessingStarted := false
+
 	for _, txRec := range tx.Records {
 		if txRec.IsClient {
 			vtx.Side = "client"
@@ -307,10 +252,10 @@ func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varn
 		} else {
 			vtx.Side = "unknown"
 		}
-		if !seenVCLCall {
+		if !vclProcessingStarted {
 			switch txRec.Tag {
 			case varnishlog.TagVCLCall:
-				seenVCLCall = true
+				vclProcessingStarted = true
 			case varnishlog.TagReqHeader, varnishlog.TagBereqHeader:
 				if vtx.tpUpstreamSID.IsEmpty() {
 					if name, val, err := parseHeader(txRec.Data); err == nil && name == requiredTraceparentHeader {
@@ -323,7 +268,10 @@ func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varn
 		}
 		if trans, ok := transformFuncs[txRec.Tag.String()]; ok {
 			if err := trans(vtx, txRec); err != nil {
-				v.set.Logger.Error("failed to translate record", zap.String("record", txRec.Tag.String()), zap.Error(err))
+				v.set.Logger.Warn("failed to translate record",
+					zap.Uint64("vxid", txRec.VXID),
+					zap.String("tag", txRec.Tag.String()),
+					zap.Error(err))
 			}
 		}
 	}
