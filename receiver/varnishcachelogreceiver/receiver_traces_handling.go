@@ -43,6 +43,20 @@ type varnishTransactionEvent struct {
 	Name      string
 }
 
+// varnishTransactionCacheHit mirrors the fields of the VSL `Hit` record
+// (`Hit <objVXID> <ttl> <grace> <keep> [<fetched> <clen>]`). Durations are
+// stored in milliseconds (converted from the VSL's float-seconds payload)
+// so downstream consumers can query them as plain integers. TTLMillis may
+// be negative when the object is beyond ttl but still within grace — that
+// is the grace-served hit state which typically triggers Varnish's
+// background revalidation fetch.
+type varnishTransactionCacheHit struct {
+	ObjVXID     uint64
+	TTLMillis   int64
+	GraceMillis int64
+	KeepMillis  int64
+}
+
 type varnishTransactionStorage struct {
 	Name string
 	Type string
@@ -98,8 +112,7 @@ type varnishTransaction struct {
 	Errors     []string
 	Links      []varnishTransactionLink
 	Events     []varnishTransactionEvent
-	// Cache carries the numeric fields from the VSL `Hit` record.
-	Cache *varnishTransactionCacheHit
+	Cache      *varnishTransactionCacheHit
 	// SLT_Begin: sess, req, bereq
 	Type  string
 	Level uint64
@@ -127,21 +140,6 @@ func (tx *varnishTransaction) traceparent() string {
 // traceparent header, if any, and is used as parent_id on the root span of this request.
 func (tx *varnishTransaction) upstreamSpanID() pcommon.SpanID {
 	return tx.tpUpstreamSID
-}
-
-// varnishTransactionCacheHit mirrors the fields of the VSL `Hit` record
-// (`Hit <objVXID> <ttl> <grace> <keep> [<fetched> <clen>]`). Durations are
-// stored in milliseconds (converted from the VSL's float-seconds payload)
-// so downstream consumers can query them as plain integers. TTLMillis may
-// be negative when the object is beyond ttl but still within grace — that
-// is the grace-served hit state which typically triggers Varnish's
-// background revalidation fetch.
-// TODO(thomasklinger1234): move struct above varnishTransaction
-type varnishTransactionCacheHit struct {
-	ObjVXID     uint64
-	TTLMillis   int64
-	GraceMillis int64
-	KeepMillis  int64
 }
 
 type varnishTagTransformerFunc func(vtx *varnishTransaction, rec varnishlog.Record) error
