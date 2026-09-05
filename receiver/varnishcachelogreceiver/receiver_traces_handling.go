@@ -365,31 +365,42 @@ func transformAnyAcct(tx *varnishTransaction, rec varnishlog.Record) error {
 	return nil
 }
 
+const (
+	handlingMiss         = "miss"
+	handlingPass         = "pass"
+	handlingPipe         = "pipe"
+	handlingPurge        = "purge"
+	handlingFetch        = "fetch"
+	handlingFetchError   = "fetch_error"
+	handlingSynth        = "synth"
+	handlingHit          = "hit"
+	handlingHitStreaming = "hit_streaming"
+)
+
 func transformVCLCall(tx *varnishTransaction, rec varnishlog.Record) error {
 	parts, err := splitPayload(rec, 1, 1)
 	if err != nil {
 		return err
 	}
 	h := parts[0]
-	// todo: move magic strings to constants
 	switch h {
 	case "MISS":
-		tx.Handling = "miss"
+		tx.Handling = handlingMiss
 	case "PASS":
-		tx.Handling = "pass"
+		tx.Handling = handlingPass
 	case "PIPE":
-		tx.Handling = "pipe"
+		tx.Handling = handlingPipe
 	case "PURGE":
-		tx.Handling = "purge"
+		tx.Handling = handlingPurge
 	case "BACKEND_RESPONSE":
-		tx.Handling = "fetch"
+		tx.Handling = handlingFetch
 	case "BACKEND_ERROR":
-		tx.Handling = "fetch_error"
+		tx.Handling = handlingFetchError
 	case "SYNTH":
-		tx.Handling = "synth"
+		tx.Handling = handlingSynth
 	case "HIT":
 		if tx.Handling == "" {
-			tx.Handling = "hit"
+			tx.Handling = handlingHit
 		}
 	}
 	return nil
@@ -446,9 +457,9 @@ func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 		return fmt.Errorf("failed to parse Hit: scanned=%d payload=%q", scanned, rec.Data)
 	}
 	if scanned == 6 {
-		tx.Handling = "streaming-hit"
+		tx.Handling = handlingHitStreaming
 	} else {
-		tx.Handling = "hit"
+		tx.Handling = handlingHit
 	}
 	tx.Cache = &varnishTransactionCacheHit{
 		ObjVXID:     xid,
@@ -579,7 +590,7 @@ func setVarnishSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 // setCacheHitSpanAttrs emits `varnish.cache.*` attributes for cache-hit
 // spans.
 func setCacheHitSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
-	isHit := tx.Handling == "hit" || tx.Handling == "streaming-hit"
+	isHit := tx.Handling == handlingHit || tx.Handling == handlingHitStreaming
 	if !isHit {
 		return
 	}
@@ -663,7 +674,7 @@ func setSpanMeta(span ptrace.Span, tx *varnishTransaction) {
 }
 
 func setSpanCode(span ptrace.Span, tx *varnishTransaction) {
-	if tx.Handling == "fetch_error" {
+	if tx.Handling == handlingFetchError {
 		span.Status().SetCode(ptrace.StatusCodeError)
 	}
 }
