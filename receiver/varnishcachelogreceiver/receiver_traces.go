@@ -200,26 +200,6 @@ func (v *varnishcachelogTraceReceiver) visitVtxLinks(scopeSpans ptrace.ScopeSpan
 	}
 }
 
-func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.SpanID, byte, bool) {
-	if vtx.tpParsed {
-		return vtx.tpTID, vtx.tpSID, vtx.tpFlags, vtx.tpOK
-	}
-	vtx.tpParsed = true
-	tp := vtx.traceparent()
-	if tp == "" {
-		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
-	}
-	tid, sid, flags, err := extractTraceparent(tp)
-	if err != nil {
-		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
-	}
-	vtx.tpTID = tid
-	vtx.tpSID = sid
-	vtx.tpFlags = flags
-	vtx.tpOK = true
-	return tid, sid, flags, true
-}
-
 func (v *varnishcachelogTraceReceiver) buildVtx(tx varnishlog.Transaction) *varnishTransaction {
 	vtx := &varnishTransaction{
 		VXID:       tx.VXID,
@@ -284,6 +264,26 @@ func newVarnishcacheLogReceiver(set receiver.Settings, config *Config, nextConsu
 		nextConsumer: nextConsumer,
 		spanOpts:     buildSpanOpts(config),
 	}
+}
+
+func extractTraceContext(vtx *varnishTransaction) (pcommon.TraceID, pcommon.SpanID, byte, bool) {
+	if vtx.tpParsed {
+		return vtx.tpTID, vtx.tpSID, vtx.tpFlags, vtx.tpOK
+	}
+	vtx.tpParsed = true
+	tp := vtx.traceparent()
+	if tp == "" {
+		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
+	}
+	tid, sid, flags, err := extractTraceparent(tp)
+	if err != nil {
+		return pcommon.TraceID{}, pcommon.SpanID{}, 0, false
+	}
+	vtx.tpTID = tid
+	vtx.tpSID = sid
+	vtx.tpFlags = flags
+	vtx.tpOK = true
+	return tid, sid, flags, true
 }
 
 func buildHeaderMapping(mapping map[string]string) []headerMapping {
