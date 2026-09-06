@@ -378,7 +378,7 @@ const (
 	handlingFetchError   = "fetch_error"
 	handlingSynth        = "synth"
 	handlingHit          = "hit"
-	handlingHitStreaming = "hit_streaming"
+	handlingHitStreaming = "streaming-hit"
 )
 
 func transformVCLCall(tx *varnishTransaction, rec varnishlog.Record) error {
