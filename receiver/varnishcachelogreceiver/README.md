@@ -50,22 +50,22 @@ receivers:
 
 ### Add custom attributes
 
-To attach custom OpenTelemetry span attributes from Varnish write `VCL_Log` records whose payload starts with the prefix `OTEL_Attribute:`.
+To add span attributes from VCL, write `VCL_Log` records whose payload starts with the prefix `OTEL_Attribute:`.
 
 This works no matter how the message is produced:
 
 - directly from VCL via `std.log(...)`
 - from a VMOD that emits `VCL_Log` records itself
 
-#### Message format
+Currently, only string attributes are supported.
 
-Use this exact pattern:
+#### Message format
 
 ```text
 OTEL_Attribute: <key>=<value>
 ```
 
-Valid examples:
+Examples:
 
 ```text
 OTEL_Attribute: app.feature=checkout
