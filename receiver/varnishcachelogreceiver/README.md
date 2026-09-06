@@ -46,46 +46,14 @@ receivers:
   varnishcachelog: { }
 ```
 
-## Usage
+## Customization with VCL
 
-### Add custom attributes
+Several aspects of a span can be customized from VCL by writing `VCL_Log` tags with a specific prefix to a transaction, either with `std.log(...)`
+or natively from a VMOD.
 
-To add span attributes from VCL, write `VCL_Log` records whose payload starts with the prefix `OTEL_Attribute:`.
+In all cases, the last occurence of the respective log tag wins. 
 
-This works no matter how the message is produced:
-
-- directly from VCL via `std.log(...)`
-- from a VMOD that emits `VCL_Log` records itself
-
-Currently, only string attributes are supported.
-
-#### Message format
-
-```text
-OTEL_Attribute: <key>=<value>
-```
-
-Examples:
-
-```text
-OTEL_Attribute: app.feature=checkout
-OTEL_Attribute: tenant.id=acme
-OTEL_Attribute:varnish.custom_attribute=custom_value=test
-```
-
-Parsing rules:
-
-- the prefix must be exactly `OTEL_Attribute:`
-- the receiver splits on the first `=` only
-- whitespace around the key and value is trimmed
-- both key and value must be non-empty
-- malformed messages are ignored silently
-- if the same key is logged multiple times in one transaction, the last value wins
-- configured header mappings from `capture_request_headers` and `capture_response_headers` take precedence over attributes coming from `VCL_Log`
-
-
-#### Example: set attributes with `std.log`
-
+**Full example**
 ```vcl
 import std;
 
@@ -96,7 +64,44 @@ sub vcl_recv {
     if (req.http.X-Tenant-ID) {
         std.log("OTEL_Attribute: tenant.id=" + req.http.X-Tenant-ID);
     }
+    
+    std.log("OTEL_SpanName: Checkout");
 }
+```
+
+### Add attributes
+
+To add span attributes from VCL, write `VCL_Log` records whose payload take the form
+
+```text
+OTEL_Attribute: <key>=<value>
+```
+
+Currently, only string attributes are supported.
+
+**Examples**:
+
+```text
+OTEL_Attribute: app.feature=checkout
+OTEL_Attribute: tenant.id=acme
+OTEL_Attribute:varnish.custom_attribute=custom_value=test
+```
+
+**Constraints**:
+
+- the receiver splits on the first `=` only
+- whitespace around the key and value is trimmed
+- both key and value must be non-empty
+- malformed messages are ignored silently
+- if the same key is logged multiple times in one transaction, the last value wins
+- configured header mappings from `capture_request_headers` and `capture_response_headers` take precedence over attributes coming from `VCL_Log`
+
+### Set span name
+
+To set the span name from VCL, write `VCL_Log` records whose payload take the form
+
+```text
+OTEL_SpanName: <span-name>
 ```
 
 [Varnish Cache]: https://www.varnish.org/

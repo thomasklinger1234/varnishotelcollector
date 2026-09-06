@@ -14,8 +14,12 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 )
 
-// vclLogOtelPrefix can be used in VCL_Log messages to set custom OTEL attributes (see setCustomSpanAttrs(...))
-const vclLogOtelPrefix = "OTEL_Attribute:"
+const (
+	// vclLogAttributeKey can be used in VCL_Log messages to set custom attributes (see customizeSpanFromVCLLog(...))
+	vclLogAttributeKey = "OTEL_Attribute:"
+	// vclLogAttributeKey can be used in VCL_Log messages to set a custom span name (see customizeSpanFromVCLLog(...))
+	vclLogSpanNameKey = "OTEL_SpanName:"
+)
 
 // splitPayload returns the space-separated fields of rec.Payload.
 // It returns an "invalid tag" error when the field count is outside [min, max].
@@ -694,14 +698,20 @@ func setSpanTimestamps(span ptrace.Span, tx *varnishTransaction) {
 	}
 }
 
-func setCustomSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
+func customizeSpanFromVCLLog(span ptrace.Span, tx *varnishTransaction) {
 	for _, logMsg := range tx.Logs {
-		if strings.HasPrefix(logMsg, vclLogOtelPrefix) {
-			key, value, found := strings.Cut(logMsg[len(vclLogOtelPrefix):], "=")
-			otelAttr := strings.TrimSpace(key)
-			otelVal := strings.TrimSpace(value)
-			if found && otelAttr != "" && otelVal != "" {
-				span.Attributes().PutStr(otelAttr, otelVal)
+		if strings.HasPrefix(logMsg, vclLogAttributeKey) {
+			key, value, found := strings.Cut(logMsg[len(vclLogAttributeKey):], "=")
+			attrKey := strings.TrimSpace(key)
+			attrVal := strings.TrimSpace(value)
+			if found && attrKey != "" && attrVal != "" {
+				span.Attributes().PutStr(attrKey, attrVal)
+			}
+		}
+		if strings.HasPrefix(logMsg, vclLogSpanNameKey) {
+			spanName := strings.TrimSpace(logMsg[len(vclLogSpanNameKey):])
+			if spanName != "" {
+				span.SetName(spanName)
 			}
 		}
 	}
@@ -715,8 +725,10 @@ func updateSpan(span ptrace.Span, tx *varnishTransaction, opts spanOpts) {
 	setRequestSpanAttrs(span, tx)
 	setResponseSpanAttrs(span, tx)
 	setSpanTimestamps(span, tx)
-	setCustomSpanAttrs(span, tx)
 
 	setSpanMeta(span, tx)
 	setSpanCode(span, tx)
+
+	// keep this at the end
+	customizeSpanFromVCLLog(span, tx)
 }
