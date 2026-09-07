@@ -67,9 +67,10 @@ type varnishTransactionStorage struct {
 }
 
 type varnishTransactionClientConn struct {
-	Addr string
-	Port uint64
-	Sock string
+	Addr  string
+	Port  uint64
+	Sock  string
+	Proto string
 }
 
 type varnishTransactionBackendConn struct {
@@ -324,7 +325,7 @@ func transformRespProtocol(tx *varnishTransaction, rec varnishlog.Record) error 
 }
 
 func transformReqStart(tx *varnishTransaction, rec varnishlog.Record) error {
-	parts, err := splitPayload(rec, 3, 3)
+	parts, err := splitPayload(rec, 3, 4)
 	if err != nil {
 		return err
 	}
@@ -335,6 +336,9 @@ func transformReqStart(tx *varnishTransaction, rec varnishlog.Record) error {
 	tx.Client.Addr = parts[0]
 	tx.Client.Port = rPort
 	tx.Client.Sock = parts[2]
+	if len(parts) > 3 {
+		tx.Client.Proto = parts[3]
+	}
 	return nil
 }
 
@@ -628,6 +632,9 @@ func setRequestSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	}
 	if tx.Req.ProtoVersion != "" {
 		span.Attributes().PutStr(string(semconv.NetworkProtocolVersionKey), tx.Req.ProtoVersion)
+	}
+	if tx.Client.Proto != "" {
+		span.Attributes().PutStr(string(semconv.URLSchemeKey), tx.Client.Proto)
 	}
 	if tx.Req.URL != "" {
 		if urlParsed, err := url.Parse(tx.Req.URL); err == nil {
