@@ -47,18 +47,10 @@ type varnishTransactionEvent struct {
 	Name      string
 }
 
-// varnishTransactionCacheHit mirrors the fields of the VSL `Hit` record
-// (`Hit <objVXID> <ttl> <grace> <keep> [<fetched> <clen>]`). Durations are
-// stored in milliseconds (converted from the VSL's float-seconds payload)
-// so downstream consumers can query them as plain integers. TTLMillis may
-// be negative when the object is beyond ttl but still within grace — that
-// is the grace-served hit state which typically triggers Varnish's
-// background revalidation fetch.
-type varnishTransactionCacheHit struct {
-	ObjVXID     uint64
-	TTLMillis   int64
-	GraceMillis int64
-	KeepMillis  int64
+type varnishTransactionCacheObj struct {
+	TTL   float64
+	Grace float64
+	Keep  float64
 }
 
 type varnishTransactionStorage struct {
@@ -117,7 +109,7 @@ type varnishTransaction struct {
 	Errors     []string
 	Links      []varnishTransactionLink
 	Events     []varnishTransactionEvent
-	Cache      *varnishTransactionCacheHit
+	CacheObj   *varnishTransactionCacheObj
 	// SLT_Begin: sess, req, bereq
 	Type  string
 	Level uint64
@@ -469,11 +461,10 @@ func transformHit(tx *varnishTransaction, rec varnishlog.Record) error {
 	} else {
 		tx.Handling = handlingHit
 	}
-	tx.Cache = &varnishTransactionCacheHit{
-		ObjVXID:     xid,
-		TTLMillis:   int64(ttl * 1000),
-		GraceMillis: int64(grace * 1000),
-		KeepMillis:  int64(keep * 1000),
+	tx.CacheObj = &varnishTransactionCacheObj{
+		TTL:   ttl,
+		Grace: grace,
+		Keep:  keep,
 	}
 	return nil
 }
@@ -595,22 +586,15 @@ func setVarnishSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	}
 }
 
-// setCacheHitSpanAttrs emits `varnish.cache.*` attributes for cache-hit
-// spans.
 func setCacheHitSpanAttrs(span ptrace.Span, tx *varnishTransaction) {
 	isHit := tx.Handling == handlingHit || tx.Handling == handlingHitStreaming
-	if !isHit {
+	span.Attributes().PutBool("varnish.obj.hit", isHit)
+	if tx.CacheObj == nil {
 		return
 	}
-	span.Attributes().PutBool("varnish.cache.hit", true)
-	if tx.Cache == nil {
-		return
-	}
-	graceHit := tx.Cache.TTLMillis <= 0 && tx.Cache.GraceMillis > 0
-	span.Attributes().PutBool("varnish.cache.grace_hit", graceHit)
-	span.Attributes().PutInt("varnish.cache.ttl_ms", tx.Cache.TTLMillis)
-	span.Attributes().PutInt("varnish.cache.grace_ms", tx.Cache.GraceMillis)
-	span.Attributes().PutInt("varnish.cache.keep_ms", tx.Cache.KeepMillis)
+	span.Attributes().PutDouble("varnish.obj.ttl", tx.CacheObj.TTL)
+	span.Attributes().PutDouble("varnish.obj.grace", tx.CacheObj.Grace)
+	span.Attributes().PutDouble("varnish.obj.keep", tx.CacheObj.Keep)
 }
 
 func setBackendSpanAttrs(span ptrace.Span, tx *varnishTransaction) {

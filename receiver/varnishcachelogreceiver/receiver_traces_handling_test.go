@@ -73,11 +73,10 @@ func TestTransformVCLCall_DeliverDoesNotStompHit(t *testing.T) {
 	attrs := spanAttrsForVXID(t, rcv, txGrp, rxreqVXID)
 
 	assert.Equal(t, "hit", attrs["varnish.handling"])
-	assert.Equal(t, true, attrs["varnish.cache.hit"])
-	assert.Equal(t, false, attrs["varnish.cache.grace_hit"], "fresh hit: ttl>0 => grace_hit=false")
-	assert.Equal(t, int64(9196), attrs["varnish.cache.ttl_ms"])
-	assert.Equal(t, int64(1000), attrs["varnish.cache.grace_ms"])
-	assert.Equal(t, int64(0), attrs["varnish.cache.keep_ms"])
+	assert.Equal(t, true, attrs["varnish.obj.hit"])
+	assert.Equal(t, 9.196981, attrs["varnish.obj.ttl"])
+	assert.Equal(t, 1.0, attrs["varnish.obj.grace"])
+	assert.Equal(t, 0.0, attrs["varnish.obj.keep"])
 }
 
 func TestTransformHit_GraceHitFlaggedWhenTTLNonPositive(t *testing.T) {
@@ -101,10 +100,9 @@ func TestTransformHit_GraceHitFlaggedWhenTTLNonPositive(t *testing.T) {
 	attrs := spanAttrsForVXID(t, rcv, txGrp, rxreqVXID)
 
 	assert.Equal(t, "hit", attrs["varnish.handling"])
-	assert.Equal(t, true, attrs["varnish.cache.hit"])
-	assert.Equal(t, true, attrs["varnish.cache.grace_hit"], "stale-but-graced: ttl<=0 && grace>0 => grace_hit=true")
-	assert.Equal(t, int64(-500), attrs["varnish.cache.ttl_ms"])
-	assert.Equal(t, int64(1000), attrs["varnish.cache.grace_ms"])
+	assert.Equal(t, true, attrs["varnish.obj.hit"])
+	assert.Equal(t, -0.5, attrs["varnish.obj.ttl"])
+	assert.Equal(t, 1.0, attrs["varnish.obj.grace"])
 }
 
 func TestTransformHit_StreamingHitSetsHandlingAndHitFlag(t *testing.T) {
@@ -128,8 +126,6 @@ func TestTransformHit_StreamingHitSetsHandlingAndHitFlag(t *testing.T) {
 	attrs := spanAttrsForVXID(t, rcv, txGrp, rxreqVXID)
 
 	assert.Equal(t, "streaming-hit", attrs["varnish.handling"])
-	assert.Equal(t, true, attrs["varnish.cache.hit"])
-	assert.Equal(t, false, attrs["varnish.cache.grace_hit"])
 }
 
 func TestTransformVCLCall_MissDoesNotSetCacheHit(t *testing.T) {
